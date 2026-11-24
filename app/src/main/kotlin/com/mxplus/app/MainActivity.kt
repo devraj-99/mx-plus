@@ -139,18 +139,19 @@ private fun Shell() {
         }
     }
     val onPickFile = { pickFile.launch(arrayOf("video/*")) }
-    val onAllFiles = {
+    val onAllFiles: () -> Unit = {
         runCatching {
             context.startActivity(Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:" + context.packageName)))
         }.onFailure {
             context.startActivity(Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
         }
+        Unit
     }
 
     val play: (List<VideoItem>, Int) -> Unit = { list, i ->
         PlayerHost.request = PlayRequest(list.map { PlayItem(it.uri.toString(), it.title) }, i)
     }
-    val openSettings = {
+    val openSettings: () -> Unit = {
         context.startActivity(
             Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + context.packageName)),
         )
