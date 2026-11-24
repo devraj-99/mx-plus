@@ -1,0 +1,592 @@
+package com.mxplus.app
+
+import android.app.Activity
+import android.content.Context
+import android.content.pm.ActivityInfo
+import android.media.AudioManager
+import android.view.WindowManager
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.AspectRatio
+import androidx.compose.material.icons.rounded.Audiotrack
+import androidx.compose.material.icons.rounded.Forward10
+import androidx.compose.material.icons.rounded.Forward30
+import androidx.compose.material.icons.rounded.Forward5
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.LockOpen
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlaylistPlay
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Replay10
+import androidx.compose.material.icons.rounded.Replay30
+import androidx.compose.material.icons.rounded.Replay5
+import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.material.icons.rounded.SkipPrevious
+import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.material.icons.rounded.Subtitles
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.VideoSize
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
+import kotlinx.coroutines.delay
+import kotlin.math.abs
+
+data class PlayItem(val uri: String, val title: String)
+data class PlayRequest(val items: List<PlayItem>, val index: Int, val external: Boolean = false)
+
+private enum class DragMode { SEEK, BRIGHTNESS, VOLUME }
+
+private val Speeds = listOf(0.25f, 0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 3f)
+
+private fun speedLabel(s: Float): String = (if (s % 1f == 0f) "%.0f".format(s) else "%.2f".format(s).trimEnd('0')) + "x"
+
+@androidx.annotation.OptIn(UnstableApi::class)
+@Composable
+fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
+    val context = LocalContext.current
+    val activity = context as Activity
+    val view = LocalView.current
+    val dark = true
+
+    var currentIndex by remember { mutableIntStateOf(request.index) }
+    var titleText by remember { mutableStateOf(request.items[request.index].title) }
+    var pos by remember { mutableLongStateOf(0L) }
+    var dur by remember { mutableLongStateOf(0L) }
+    var playing by remember { mutableStateOf(false) }
+    var buffering by remember { mutableStateOf(true) }
+    var speed by remember { mutableStateOf(Prefs.defaultSpeed) }
+    var resize by remember { mutableIntStateOf(0) } // 0 fit, 1 fill, 2 zoom
+    var showControls by remember { mutableStateOf(true) }
+    var interaction by remember { mutableIntStateOf(0) }
+    var locked by remember { mutableStateOf(false) }
+    var scrub by remember { mutableStateOf<Long?>(null) }
+    var hud by remember { mutableStateOf<String?>(null) }
+    var hudTick by remember { mutableIntStateOf(0) }
+    var dialog by remember { mutableStateOf(0) } // 0 none, 1 speed, 2 audio, 3 subs, 4 playlist
+    var error by remember { mutableStateOf<String?>(null) }
+
+    val player = remember {
+        ExoPlayer.Builder(context).build().apply {
+            val mediaItems = request.items.map {
+                MediaItem.Builder().setUri(it.uri).setMediaMetadata(MediaMetadata.Builder().setTitle(it.title).build()).build()
+            }
+            val start = request.items[request.index]
+            val resumeAt = if (Prefs.resume) Prefs.resumePosition(start.uri) else 0L
+            setMediaItems(mediaItems, request.index, resumeAt)
+            setPlaybackSpeed(Prefs.defaultSpeed)
+            prepare()
+            playWhenReady = true
+        }
+    }
+
+    fun flash(text: String) {
+        hud = text
+        hudTick++
+    }
+
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                currentIndex = player.currentMediaItemIndex
+                titleText = mediaItem?.mediaMetadata?.title?.toString() ?: titleText
+            }
+
+            override fun onPlaybackStateChanged(state: Int) {
+                if (state == Player.STATE_ENDED) {
+                    if (!(Prefs.autoNext && player.hasNextMediaItem())) {
+                        Prefs.saveResume(request.items[player.currentMediaItemIndex].uri, 0, 0)
+                        onClose()
+                    }
+                }
+            }
+
+            override fun onVideoSizeChanged(size: VideoSize) {
+                if (size.width > 0 && size.height > 0) {
+                    activity.requestedOrientation = if (size.height > size.width) {
+                        ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                    } else {
+                        ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                    }
+                }
+            }
+
+            override fun onPlayerError(e: PlaybackException) {
+                error = "Can't play this video (" + (e.errorCodeName) + ")"
+            }
+        }
+        player.addListener(listener)
+        onDispose {
+            runCatching {
+                val item = request.items.getOrNull(player.currentMediaItemIndex)
+                if (item != null) Prefs.saveResume(item.uri, player.currentPosition, player.duration.coerceAtLeast(0))
+            }
+            player.removeListener(listener)
+            player.release()
+        }
+    }
+
+    // immersive + orientation + keep screen on
+    DisposableEffect(Unit) {
+        val window = activity.window
+        val controller = WindowCompat.getInsetsController(window, view)
+        controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        controller.hide(WindowInsetsCompat.Type.systemBars())
+        if (Prefs.keepOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose {
+            controller.show(WindowInsetsCompat.Type.systemBars())
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            val lp = window.attributes
+            lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            window.attributes = lp
+        }
+    }
+
+    LaunchedEffect(player) {
+        var saveTick = 0
+        while (true) {
+            pos = player.currentPosition
+            dur = player.duration.coerceAtLeast(0L)
+            playing = player.isPlaying
+            buffering = player.playbackState == Player.STATE_BUFFERING
+            speed = player.playbackParameters.speed
+            saveTick++
+            if (saveTick >= 20) {
+                saveTick = 0
+                request.items.getOrNull(player.currentMediaItemIndex)?.let { Prefs.saveResume(it.uri, player.currentPosition, dur) }
+            }
+            delay(250)
+        }
+    }
+
+    LaunchedEffect(showControls, playing, interaction) {
+        if (showControls && playing && !locked) {
+            delay(3500)
+            showControls = false
+        }
+    }
+    LaunchedEffect(hudTick) {
+        if (hud != null) {
+            delay(900)
+            hud = null
+        }
+    }
+
+    BackHandler {
+        if (dialog != 0) dialog = 0 else onClose()
+    }
+
+    val lockedState by rememberUpdatedState(locked)
+    val controlsState by rememberUpdatedState(showControls)
+
+    fun seekBy(deltaMs: Long) {
+        val target = (player.currentPosition + deltaMs).coerceIn(0L, if (dur > 0) dur else Long.MAX_VALUE)
+        player.seekTo(target)
+        pos = target
+    }
+
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { ctx ->
+                PlayerView(ctx).apply {
+                    useController = false
+                    this.player = player
+                    setShutterBackgroundColor(android.graphics.Color.BLACK)
+                    keepScreenOn = true
+                }
+            },
+            update = {
+                it.resizeMode = when (resize) {
+                    1 -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+                    2 -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                    else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+                }
+            },
+        )
+
+        // Gesture layer
+        Box(
+            Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onTap = { showControls = !controlsState; interaction++ },
+                        onDoubleTap = { offset ->
+                            if (!lockedState) {
+                                val ms = Prefs.seekSeconds * 1000L
+                                if (offset.x < size.width / 2f) {
+                                    seekBy(-ms); flash("-${Prefs.seekSeconds}s")
+                                } else {
+                                    seekBy(ms); flash("+${Prefs.seekSeconds}s")
+                                }
+                            }
+                        },
+                    )
+                }
+                .pointerInput(Unit) {
+                    var mode: DragMode? = null
+                    var startX = 0f
+                    var totalX = 0f
+                    var totalY = 0f
+                    var basePos = 0L
+                    var baseBright = 0.5f
+                    var baseVol = 0f
+                    var seekTarget = 0L
+                    val audio = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                    detectDragGestures(
+                        onDragStart = { offset ->
+                            mode = null
+                            startX = offset.x
+                            totalX = 0f
+                            totalY = 0f
+                            basePos = player.currentPosition
+                            val b = activity.window.attributes.screenBrightness
+                            baseBright = if (b < 0f) 0.5f else b
+                            val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+                            baseVol = audio.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / max
+                        },
+                        onDragEnd = {
+                            if (mode == DragMode.SEEK) {
+                                player.seekTo(seekTarget)
+                                scrub = null
+                            }
+                            mode = null
+                        },
+                        onDragCancel = { scrub = null; mode = null },
+                        onDrag = { change, drag ->
+                            if (lockedState || !Prefs.gestures) return@detectDragGestures
+                            change.consume()
+                            totalX += drag.x
+                            totalY += drag.y
+                            if (mode == null && (abs(totalX) > 24f || abs(totalY) > 24f)) {
+                                mode = if (abs(totalX) > abs(totalY)) DragMode.SEEK else if (startX < size.width / 2f) DragMode.BRIGHTNESS else DragMode.VOLUME
+                            }
+                            when (mode) {
+                                DragMode.SEEK -> {
+                                    val d = if (dur > 0) dur else 0L
+                                    seekTarget = (basePos + (totalX / size.width * 120_000f).toLong()).coerceIn(0L, d)
+                                    scrub = seekTarget
+                                    flash((if (seekTarget >= basePos) "+" else "-") + formatTime(abs(seekTarget - basePos)) + "  " + formatTime(seekTarget))
+                                }
+                                DragMode.BRIGHTNESS -> {
+                                    val v = (baseBright - totalY / size.height * 1.2f).coerceIn(0.02f, 1f)
+                                    val lp = activity.window.attributes
+                                    lp.screenBrightness = v
+                                    activity.window.attributes = lp
+                                    flash("Brightness " + (v * 100).toInt() + "%")
+                                }
+                                DragMode.VOLUME -> {
+                                    val v = (baseVol - totalY / size.height * 1.2f).coerceIn(0f, 1f)
+                                    val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                                    audio.setStreamVolume(AudioManager.STREAM_MUSIC, (v * max).toInt(), 0)
+                                    flash("Volume " + (v * 100).toInt() + "%")
+                                }
+                                null -> {}
+                            }
+                        },
+                    )
+                },
+        )
+
+        if (buffering && error == null) {
+            CircularProgressIndicator(
+                modifier = Modifier.align(Alignment.Center).size(44.dp),
+                color = Color.White,
+                strokeWidth = 3.dp,
+            )
+        }
+
+        error?.let {
+            Text(it, color = Color.White, modifier = Modifier.align(Alignment.Center).glass(RoundedCornerShape(16.dp), null, dark).padding(20.dp))
+        }
+
+        hud?.let {
+            Text(
+                it,
+                color = Color.White,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 28.dp).glass(RoundedCornerShape(20.dp), null, dark).padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        }
+
+        val displayPos = scrub ?: pos
+        val safe = Modifier.windowInsetsPadding(WindowInsets.displayCutout)
+
+        if (locked) {
+            if (showControls) {
+                Column(
+                    Modifier.align(Alignment.Center),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Box(
+                        Modifier.size(78.dp).glass(CircleShape, null, dark).pressable { locked = false; showControls = true },
+                        contentAlignment = Alignment.Center,
+                    ) { Icon(Icons.Rounded.Lock, "Unlock", tint = Color.White, modifier = Modifier.size(34.dp)) }
+                    Spacer(Modifier.height(10.dp))
+                    Text("Tap to unlock", color = Color.White.copy(alpha = 0.9f), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        } else if (showControls) {
+            Box(Modifier.fillMaxSize().then(safe).padding(horizontal = 20.dp)) {
+                // Header
+                Row(
+                    Modifier.align(Alignment.TopStart).fillMaxWidth().padding(top = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    GlassIcon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", 44.dp, 24.dp) { onClose() }
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        titleText,
+                        color = Color.White,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).glass(RoundedCornerShape(22.dp), null, dark).padding(horizontal = 16.dp, vertical = 10.dp),
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    if (request.items.size > 1) {
+                        GlassIcon(Icons.Rounded.PlaylistPlay, "Playlist", 44.dp, 24.dp) { dialog = 4; interaction++ }
+                        Spacer(Modifier.width(10.dp))
+                    }
+                    GlassIcon(Icons.Rounded.LockOpen, "Lock controls", 44.dp, 24.dp) { locked = true; showControls = true }
+                }
+
+                // Center controls
+                Row(
+                    Modifier.align(Alignment.Center),
+                    horizontalArrangement = Arrangement.spacedBy(36.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    GlassIcon(backIcon(Prefs.seekSeconds), "Back", 64.dp, 32.dp) { seekBy(-Prefs.seekSeconds * 1000L); interaction++ }
+                    GlassIcon(if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play or pause", 88.dp, 48.dp) {
+                        if (player.isPlaying) player.pause() else player.play()
+                        interaction++
+                    }
+                    GlassIcon(fwdIcon(Prefs.seekSeconds), "Forward", 64.dp, 32.dp) { seekBy(Prefs.seekSeconds * 1000L); interaction++ }
+                }
+
+                // Bottom
+                Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(bottom = 14.dp)) {
+                    Slider(
+                        value = displayPos.coerceIn(0L, dur.coerceAtLeast(1L)).toFloat(),
+                        onValueChange = { scrub = it.toLong(); interaction++ },
+                        onValueChangeFinished = {
+                            scrub?.let { player.seekTo(it) }
+                            scrub = null
+                        },
+                        valueRange = 0f..dur.coerceAtLeast(1L).toFloat(),
+                        colors = SliderDefaults.colors(
+                            thumbColor = Color.White,
+                            activeTrackColor = MaterialTheme.colorScheme.primary,
+                            inactiveTrackColor = Color.White.copy(alpha = 0.28f),
+                        ),
+                    )
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        TimePill(formatTime(displayPos))
+                        TimePill(formatTime(dur))
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                        Row(
+                            Modifier.glass(RoundedCornerShape(26.dp), null, dark).padding(horizontal = 6.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            if (request.items.size > 1) {
+                                PillButton("Prev", Icons.Rounded.SkipPrevious) { if (player.hasPreviousMediaItem()) player.seekToPreviousMediaItem(); interaction++ }
+                            }
+                            PillButton(listOf("Fit", "Fill", "Zoom")[resize], Icons.Rounded.AspectRatio) { resize = (resize + 1) % 3; interaction++ }
+                            PillButton(speedLabel(speed), Icons.Rounded.Speed) { dialog = 1; interaction++ }
+                            PillButton("Subs", Icons.Rounded.Subtitles) { dialog = 3; interaction++ }
+                            PillButton("Audio", Icons.Rounded.Audiotrack) { dialog = 2; interaction++ }
+                            if (request.items.size > 1) {
+                                PillButton("Next", Icons.Rounded.SkipNext) { if (player.hasNextMediaItem()) player.seekToNextMediaItem(); interaction++ }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        when (dialog) {
+            1 -> PickerDialog("Speed", Speeds.map { speedLabel(it) }, Speeds.indexOf(speed).let { if (it < 0) -1 else it }, { i ->
+                player.setPlaybackSpeed(Speeds[i]); dialog = 0
+            }) { dialog = 0 }
+            2 -> {
+                val groups = player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+                val rows = mutableListOf<Triple<androidx.media3.common.Tracks.Group, Int, String>>()
+                groups.forEach { g ->
+                    for (t in 0 until g.length) rows += Triple(g, t, trackLabel(g.getTrackFormat(t), rows.size + 1))
+                }
+                val selected = rows.indexOfFirst { it.first.isTrackSelected(it.second) }
+                if (rows.isEmpty()) PickerDialog("Audio", listOf("No audio tracks"), -1, { dialog = 0 }) { dialog = 0 }
+                else PickerDialog("Audio", rows.map { it.third }, selected, { i ->
+                    val (g, t, _) = rows[i]
+                    player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                        .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
+                        .setOverrideForType(TrackSelectionOverride(g.mediaTrackGroup, t)).build()
+                    dialog = 0
+                }) { dialog = 0 }
+            }
+            3 -> {
+                val groups = player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
+                val rows = mutableListOf<Triple<androidx.media3.common.Tracks.Group, Int, String>>()
+                groups.forEach { g ->
+                    for (t in 0 until g.length) rows += Triple(g, t, trackLabel(g.getTrackFormat(t), rows.size + 1))
+                }
+                val off = player.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT) || rows.none { it.first.isTrackSelected(it.second) }
+                val labels = listOf("Off") + rows.map { it.third }
+                val selected = if (off) 0 else rows.indexOfFirst { it.first.isTrackSelected(it.second) } + 1
+                PickerDialog("Subtitles", labels, selected, { i ->
+                    if (i == 0) {
+                        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
+                    } else {
+                        val (g, t, _) = rows[i - 1]
+                        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                            .setOverrideForType(TrackSelectionOverride(g.mediaTrackGroup, t)).build()
+                    }
+                    dialog = 0
+                }) { dialog = 0 }
+            }
+            4 -> PickerDialog("Playlist", request.items.map { it.title }, currentIndex, { i ->
+                player.seekToDefaultPosition(i); dialog = 0
+            }) { dialog = 0 }
+        }
+    }
+}
+
+private fun trackLabel(f: androidx.media3.common.Format, n: Int): String {
+    val lang = f.language?.takeIf { it != "und" }?.let { java.util.Locale(it).displayLanguage }
+    val parts = listOfNotNull(f.label, lang, if (f.channelCount > 0 && f.sampleMimeType?.startsWith("audio") == true) "${f.channelCount}ch" else null)
+    return if (parts.isEmpty()) "Track $n" else parts.joinToString("  ·  ")
+}
+
+private fun backIcon(s: Int): ImageVector = when (s) { 5 -> Icons.Rounded.Replay5; 30 -> Icons.Rounded.Replay30; else -> Icons.Rounded.Replay10 }
+private fun fwdIcon(s: Int): ImageVector = when (s) { 5 -> Icons.Rounded.Forward5; 30 -> Icons.Rounded.Forward30; else -> Icons.Rounded.Forward10 }
+
+@Composable
+private fun GlassIcon(icon: ImageVector, desc: String, size: androidx.compose.ui.unit.Dp, iconSize: androidx.compose.ui.unit.Dp, onClick: () -> Unit) {
+    Box(
+        Modifier.size(size).glass(CircleShape, null, true).pressable(onClick),
+        contentAlignment = Alignment.Center,
+    ) { Icon(icon, desc, tint = Color.White, modifier = Modifier.size(iconSize)) }
+}
+
+@Composable
+private fun TimePill(text: String) {
+    Text(
+        text,
+        color = Color.White,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Medium,
+        modifier = Modifier.glass(RoundedCornerShape(12.dp), null, true).padding(horizontal = 10.dp, vertical = 4.dp),
+    )
+}
+
+@Composable
+private fun PillButton(label: String, icon: ImageVector, onClick: () -> Unit) {
+    Row(
+        Modifier.pressable(onClick).padding(horizontal = 12.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, label, tint = Color.White, modifier = Modifier.size(18.dp))
+        Text(label, color = Color.White, fontSize = 13.sp, maxLines = 1, softWrap = false)
+    }
+}
+
+@Composable
+private fun PickerDialog(title: String, options: List<String>, selected: Int, onPick: (Int) -> Unit, onDismiss: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            Modifier.fillMaxWidth().clipCard().background(Color(0xFF1C1C1F)).padding(vertical = 14.dp),
+        ) {
+            Text(title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+            LazyColumn(Modifier.height((options.size.coerceAtMost(7) * 52).dp)) {
+                itemsIndexed(options) { i, label ->
+                    Row(
+                        Modifier.fillMaxWidth().height(52.dp).clickable { onPick(i) }.padding(horizontal = 20.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            label,
+                            color = if (i == selected) MaterialTheme.colorScheme.primary else Color.White,
+                            fontWeight = if (i == selected) FontWeight.SemiBold else FontWeight.Normal,
+                            fontSize = 16.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun Modifier.clipCard(): Modifier = this.then(Modifier.clip(RoundedCornerShape(20.dp)))

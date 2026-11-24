@@ -19,41 +19,31 @@ jobs:
           java-version: 21
           cache: gradle
 
-      - name: Bump version code
-        run: |
-          sed -i "s/^CURRENT_PROJECT_VERSION=.*/CURRENT_PROJECT_VERSION=${{ github.run_number }}/" iosApp/Configuration/Version.xcconfig
-          cat iosApp/Configuration/Version.xcconfig
-
-      - name: Signing config
+      - name: Signing key
         env:
           KEYSTORE_BASE64: ${{ secrets.MXPLUS_KEYSTORE_BASE64 }}
-          STORE_PASSWORD: ${{ secrets.MXPLUS_STORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.MXPLUS_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.MXPLUS_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > release.jks
-          {
-            echo "NUVIO_RELEASE_STORE_FILE=release.jks"
-            echo "NUVIO_RELEASE_STORE_PASSWORD=$STORE_PASSWORD"
-            echo "NUVIO_RELEASE_KEY_ALIAS=$KEY_ALIAS"
-            echo "NUVIO_RELEASE_KEY_PASSWORD=$KEY_PASSWORD"
-          } > local.properties
+        run: printf '%s' "$KEYSTORE_BASE64" | base64 --decode > release.jks
 
       - name: Build release APK
+        env:
+          MXPLUS_VERSION_CODE: ${{ github.run_number }}
+          MXPLUS_STORE_FILE: release.jks
+          MXPLUS_STORE_PASSWORD: ${{ secrets.MXPLUS_STORE_PASSWORD }}
+          MXPLUS_KEY_ALIAS: ${{ secrets.MXPLUS_KEY_ALIAS }}
+          MXPLUS_KEY_PASSWORD: ${{ secrets.MXPLUS_KEY_PASSWORD }}
         run: |
           chmod +x gradlew
-          ./gradlew :androidApp:assembleFullRelease --stacktrace --no-daemon --console=plain
+          ./gradlew :app:assembleRelease --stacktrace --no-daemon --console=plain
 
       - name: Publish pre-release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION=$(grep MARKETING_VERSION iosApp/Configuration/Version.xcconfig | cut -d= -f2 | tr -d ' ')
-          APK=$(find androidApp/build/outputs/apk/full/release -name '*.apk' | head -n 1)
+          VERSION=$(grep -o 'versionName = "[^"]*"' app/build.gradle.kts | cut -d'"' -f2)
+          APK=$(find app/build/outputs/apk/release -name '*.apk' | head -n 1)
           mkdir -p out
           cp "$APK" "out/MX-Plus-v${VERSION}-${{ github.run_number }}.apk"
           gh release create "v${VERSION}-test-${{ github.run_number }}" "out/MX-Plus-v${VERSION}-${{ github.run_number }}.apk" \
-            --title "MX Plus v${VERSION} test build ${{ github.run_number }}" \
-            --notes "Test build. Signed with the MX Plus key. Versions go up every build so it installs over the previous one." \
+            --title "MX Plus v${VERSION} build ${{ github.run_number }}" \
+            --notes "Test build. Signed with the MX Plus key. Version code goes up every build so it installs over the last one." \
             --prerelease

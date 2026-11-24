@@ -1,5 +1,5 @@
 # MX Plus
 
-Local video, photo and music player for Android. Built on NETMAX, which is built on Nuvio (GPLv3).
+Local video player, folders, photo viewer and editor for Android. Native Kotlin and Jetpack Compose.
 
-License: GNU GPLv3, see LICENSE. Original work by the Nuvio project and contributors is credited in the in-app Licenses & Attribution screen.
+Player controls and glass effect are based on NETMAX (github.com/devraj-99/netmax-v3), built on Nuvio. GPLv3, see LICENSE.

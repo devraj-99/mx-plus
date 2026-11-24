@@ -1,5 +1,4 @@
-rootProject.name = "nuvio"
-enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
+rootProject.name = "mxplus"
 
 pluginManagement {
     repositories {
@@ -28,5 +27,4 @@ dependencyResolutionManagement {
     }
 }
 
-include(":composeApp")
-include(":androidApp")
+include(":app")
