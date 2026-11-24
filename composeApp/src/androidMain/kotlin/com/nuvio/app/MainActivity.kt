@@ -179,6 +179,8 @@ open class MainActivity : AppCompatActivity() {
         LocalVideosPlatform.bindActivity(this)
         handleIncomingAppIntent(intent, isRecreation = savedInstanceState != null)
 
+        com.nuvio.app.features.localvideos.VideosAccessHook.isPartial = { LocalVideosPlatform.isPartialAccess() }
+        com.nuvio.app.features.localvideos.VideosAccessHook.openSettings = { LocalVideosPlatform.openAppSettings() }
         com.nuvio.app.features.photos.PhotosHook.content = { m -> com.nuvio.app.features.photos.PhotosScreen(m) }
         setContent {
             App()

@@ -29,6 +29,7 @@ internal fun VideosScreen(
 ) {
     val uiState by LocalVideosRepository.uiState.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { LocalVideosRepository.ensureLoaded() }
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) { LocalVideosRepository.refresh() }
     val listState = rememberLazyListState()
     Box(modifier = modifier.fillMaxSize()) {
         LazyColumn(
@@ -45,10 +46,31 @@ internal fun VideosScreen(
                     modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp),
                 )
             }
+            if (uiState.permissionGranted && VideosAccessHook.isPartial()) {
+                item(key = "videos-partial") {
+                    androidx.compose.material3.Surface(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        onClick = { VideosAccessHook.openSettings() },
+                    ) {
+                        Text(
+                            text = "Only some videos are shared with MX Plus. Tap to allow all videos in Settings > Permissions.",
+                            modifier = Modifier.padding(16.dp),
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+            }
             localVideosContent(
                 uiState = uiState,
                 onVideoClick = { video -> onLocalVideoPlay?.invoke(video) },
             )
         }
     }
+}
+
+object VideosAccessHook {
+    var isPartial: () -> Boolean = { false }
+    var openSettings: () -> Unit = {}
 }

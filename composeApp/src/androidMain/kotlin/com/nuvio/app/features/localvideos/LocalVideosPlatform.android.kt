@@ -79,6 +79,9 @@ actual object LocalVideosPlatform {
     actual fun requestVideoPermission() {
         val activity = currentActivity?.get() ?: return
         val permissions = mutableListOf(requiredPermission())
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions += Manifest.permission.READ_MEDIA_IMAGES
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             permissions += Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
         }
@@ -87,6 +90,22 @@ actual object LocalVideosPlatform {
             permissions.toTypedArray(),
             permissionRequestCode,
         )
+    }
+
+    /** True on Android 14+ when only user-selected media is shared (the app sees just a few items). */
+    fun isPartialAccess(): Boolean {
+        val context = appContext ?: return false
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return false
+        val full = ContextCompat.checkSelfPermission(context, requiredPermission()) == PackageManager.PERMISSION_GRANTED
+        val partial = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) == PackageManager.PERMISSION_GRANTED
+        return !full && partial
+    }
+
+    fun openAppSettings() {
+        val context = appContext ?: return
+        val intent = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + context.packageName))
+        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
     }
 
     actual fun setPermissionChangedListener(listener: ((Boolean) -> Unit)?) {
@@ -117,9 +136,11 @@ actual object LocalVideosPlatform {
             MediaStore.Video.Media.HEIGHT,
         )
         val items = mutableListOf<LocalVideoItem>()
+        for (coll in listOf(collection, MediaStore.Video.Media.EXTERNAL_CONTENT_URI)) {
+        if (items.isNotEmpty()) break
         runCatching {
             resolver.query(
-                collection,
+                coll,
                 projection,
                 null,
                 null,
@@ -151,6 +172,7 @@ actual object LocalVideosPlatform {
                     )
                 }
             }
+        }
         }
         items
     }
