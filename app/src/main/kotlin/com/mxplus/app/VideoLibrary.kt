@@ -27,6 +27,7 @@ data class VideoItem(
     val width: Int,
     val height: Int,
     val folder: String,
+    val path: String = "",
 )
 
 enum class Access { NONE, PARTIAL, FULL }
@@ -35,6 +36,10 @@ object VideoLibrary {
     var videos by mutableStateOf<List<VideoItem>>(emptyList())
     var loaded by mutableStateOf(false)
     var loading by mutableStateOf(false)
+    var diag by mutableStateOf("")
+    var storeCount by mutableStateOf(0)
+    var scanCount by mutableStateOf(0)
+    var storeError by mutableStateOf("")
 
     private val thumbs = object : LruCache<Long, Bitmap>(80) {}
 
@@ -65,10 +70,65 @@ object VideoLibrary {
             return
         }
         loading = true
-        val result = withContext(Dispatchers.IO) { query(context.contentResolver) }
+        val result = withContext(Dispatchers.IO) {
+            val store = query(context.contentResolver)
+            storeCount = store.size
+            val scanned = if (hasAllFiles()) scanFiles(store.map { it.path.lowercase() }.toHashSet()) else emptyList()
+            scanCount = scanned.size
+            (store + scanned).sortedByDescending { it.added }
+        }
         videos = result
         loaded = true
         loading = false
+    }
+
+    fun hasAllFiles(): Boolean =
+        if (Build.VERSION.SDK_INT >= 30) android.os.Environment.isExternalStorageManager() else false
+
+    fun diagnostics(context: Context): String =
+        "Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT}), ${Build.MANUFACTURER} ${Build.MODEL}\n" +
+            "Media access: ${access(context)}\n" +
+            "All files access: ${if (hasAllFiles()) "yes" else "no"}\n" +
+            "System media index returned: $storeCount videos\n" +
+            "Folder scan found: $scanCount extra videos" +
+            (if (storeError.isNotEmpty()) "\nError: $storeError" else "")
+
+    private val exts = setOf("mp4", "mkv", "webm", "avi", "mov", "3gp", "m4v", "ts", "flv", "wmv", "mpg", "mpeg", "m2ts", "mts", "vob", "ogv")
+
+    @Suppress("DEPRECATION")
+    private fun scanFiles(known: Set<String>): List<VideoItem> {
+        val out = ArrayList<VideoItem>()
+        val root = android.os.Environment.getExternalStorageDirectory()
+        fun walk(dir: java.io.File, depth: Int) {
+            if (depth > 9) return
+            val list = dir.listFiles() ?: return
+            for (f in list) {
+                if (f.isDirectory) {
+                    val n = f.name
+                    if (n == "Android" && depth == 0) continue
+                    if (n == ".thumbnails" || n == ".trash" || n == ".Trash") continue
+                    walk(f, depth + 1)
+                } else {
+                    val ext = f.extension.lowercase()
+                    if (ext in exts && f.length() > 50_000 && f.absolutePath.lowercase() !in known) {
+                        out += VideoItem(
+                            id = -(f.absolutePath.hashCode().toLong().let { if (it < 0) -it else it }) - 1,
+                            title = f.nameWithoutExtension,
+                            uri = Uri.fromFile(f),
+                            durationMs = 0L,
+                            size = f.length(),
+                            added = f.lastModified() / 1000,
+                            width = 0,
+                            height = 0,
+                            folder = f.parentFile?.name ?: "Other",
+                            path = f.absolutePath,
+                        )
+                    }
+                }
+            }
+        }
+        runCatching { walk(root, 0) }
+        return out
     }
 
     private fun query(resolver: ContentResolver): List<VideoItem> {
@@ -81,6 +141,7 @@ object VideoLibrary {
             MediaStore.Video.Media.WIDTH,
             MediaStore.Video.Media.HEIGHT,
             MediaStore.Video.Media.BUCKET_DISPLAY_NAME,
+            MediaStore.Video.Media.DATA,
         )
         val collections = listOf(
             MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL),
@@ -98,6 +159,7 @@ object VideoLibrary {
                     val iW = c.getColumnIndexOrThrow(MediaStore.Video.Media.WIDTH)
                     val iH = c.getColumnIndexOrThrow(MediaStore.Video.Media.HEIGHT)
                     val iB = c.getColumnIndexOrThrow(MediaStore.Video.Media.BUCKET_DISPLAY_NAME)
+                    val iData = c.getColumnIndexOrThrow(MediaStore.Video.Media.DATA)
                     while (c.moveToNext()) {
                         val id = c.getLong(iId)
                         val name = c.getString(iName) ?: "Video"
@@ -111,10 +173,11 @@ object VideoLibrary {
                             width = c.getInt(iW),
                             height = c.getInt(iH),
                             folder = c.getString(iB) ?: "Other",
+                            path = c.getString(iData) ?: "",
                         )
                     }
                 }
-            }
+            }.onFailure { storeError = (it::class.simpleName ?: "error") + ": " + (it.message ?: "").take(120) }
             if (items.isNotEmpty()) return items
         }
         return emptyList()
@@ -125,7 +188,9 @@ object VideoLibrary {
         thumbs.get(v.id)?.let { return it }
         val bmp = withContext(Dispatchers.IO) {
             runCatching {
-                if (Build.VERSION.SDK_INT >= 29) {
+                if (v.id < 0) {
+                    android.media.ThumbnailUtils.createVideoThumbnail(v.path, MediaStore.Video.Thumbnails.MINI_KIND)
+                } else if (Build.VERSION.SDK_INT >= 29) {
                     context.contentResolver.loadThumbnail(v.uri, Size(360, 202), null)
                 } else {
                     MediaStore.Video.Thumbnails.getThumbnail(context.contentResolver, v.id, MediaStore.Video.Thumbnails.MINI_KIND, null)

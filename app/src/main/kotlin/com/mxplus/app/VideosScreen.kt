@@ -46,16 +46,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 @Composable
-fun VideosScreen(access: Access, onRequestAccess: () -> Unit, onOpenSettings: () -> Unit, onRefresh: () -> Unit, onPlay: (List<VideoItem>, Int) -> Unit) {
+fun VideosScreen(access: Access, onRequestAccess: () -> Unit, onOpenSettings: () -> Unit, onRefresh: () -> Unit, onPickFile: () -> Unit, onAllFiles: () -> Unit, onPlay: (List<VideoItem>, Int) -> Unit) {
     val videos = VideoLibrary.videos
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         Header("Videos", if (videos.isNotEmpty()) "${videos.size}" else null)
         when {
-            access == Access.NONE -> PermissionCard(onRequestAccess)
+            access == Access.NONE && !VideoLibrary.hasAllFiles() -> PermissionCard(onRequestAccess, onPickFile, onAllFiles)
             else -> {
                 if (access == Access.PARTIAL) PartialBanner(onOpenSettings)
                 if (videos.isEmpty()) {
-                    EmptyState(if (VideoLibrary.loading || !VideoLibrary.loaded) "Loading videos" else "No videos found", onRefresh)
+                    EmptyState(if (VideoLibrary.loading || !VideoLibrary.loaded) "Loading videos" else "No videos found", onRefresh, onPickFile, onAllFiles)
                 } else {
                     VideoList(videos, onPlay)
                 }
@@ -65,7 +65,7 @@ fun VideosScreen(access: Access, onRequestAccess: () -> Unit, onOpenSettings: ()
 }
 
 @Composable
-fun FoldersScreen(access: Access, onRequestAccess: () -> Unit, onRefresh: () -> Unit, onPlay: (List<VideoItem>, Int) -> Unit) {
+fun FoldersScreen(access: Access, onRequestAccess: () -> Unit, onRefresh: () -> Unit, onPickFile: () -> Unit, onAllFiles: () -> Unit, onPlay: (List<VideoItem>, Int) -> Unit) {
     var open by remember { mutableStateOf<String?>(null) }
     val videos = VideoLibrary.videos
     androidx.activity.compose.BackHandler(enabled = open != null) { open = null }
@@ -73,10 +73,10 @@ fun FoldersScreen(access: Access, onRequestAccess: () -> Unit, onRefresh: () -> 
         val folder = open
         if (folder == null) {
             Header("Folders", null)
-            if (access == Access.NONE) {
-                PermissionCard(onRequestAccess)
+            if (access == Access.NONE && !VideoLibrary.hasAllFiles()) {
+                PermissionCard(onRequestAccess, onPickFile, onAllFiles)
             } else if (videos.isEmpty()) {
-                EmptyState(if (VideoLibrary.loading || !VideoLibrary.loaded) "Loading videos" else "No videos found", onRefresh)
+                EmptyState(if (VideoLibrary.loading || !VideoLibrary.loaded) "Loading videos" else "No videos found", onRefresh, onPickFile, onAllFiles)
             } else {
                 val groups = videos.groupBy { it.folder }.toList().sortedBy { it.first.lowercase() }
                 LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 120.dp)) {
@@ -172,22 +172,35 @@ private fun VideoRow(v: VideoItem, onClick: () -> Unit) {
 }
 
 @Composable
-private fun EmptyState(text: String, onRefresh: () -> Unit) {
-    Column(Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+private fun EmptyState(text: String, onRefresh: () -> Unit, onPickFile: () -> Unit, onAllFiles: () -> Unit) {
+    val context = LocalContext.current
+    Column(Modifier.fillMaxSize().padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 17.sp)
         Spacer(Modifier.height(16.dp))
         PrimaryButton("Refresh", onRefresh)
+        Spacer(Modifier.height(10.dp))
+        PrimaryButton("Open a video file", onPickFile)
+        if (!VideoLibrary.hasAllFiles()) {
+            Spacer(Modifier.height(10.dp))
+            PrimaryButton("Scan all files", onAllFiles)
+        }
+        Spacer(Modifier.height(20.dp))
+        Text(VideoLibrary.diagnostics(context), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
     }
 }
 
 @Composable
-private fun PermissionCard(onRequest: () -> Unit) {
+private fun PermissionCard(onRequest: () -> Unit, onPickFile: () -> Unit, onAllFiles: () -> Unit) {
     Column(Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text("Allow access to your videos", color = MaterialTheme.colorScheme.onBackground, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(8.dp))
         Text("MX Plus only reads media on this phone. Nothing is uploaded.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
         Spacer(Modifier.height(20.dp))
         PrimaryButton("Allow", onRequest)
+        Spacer(Modifier.height(10.dp))
+        PrimaryButton("Scan all files", onAllFiles)
+        Spacer(Modifier.height(10.dp))
+        PrimaryButton("Open a video file", onPickFile)
     }
 }
 

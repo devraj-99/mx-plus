@@ -50,6 +50,7 @@ import androidx.compose.runtime.DisposableEffect
 import com.mxplus.app.photos.PhotosScreen
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
+import com.kyant.backdrop.backdrops.layerBackdrop
 
 object PlayerHost {
     var request by mutableStateOf<PlayRequest?>(null)
@@ -110,6 +111,7 @@ private fun Shell() {
     var tick by remember { mutableIntStateOf(0) }
     var access by remember { mutableStateOf(VideoLibrary.access(context)) }
     val haze = remember { HazeState() }
+    val backdrop = com.kyant.backdrop.backdrops.rememberLayerBackdrop()
 
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         access = VideoLibrary.access(context)
@@ -129,6 +131,22 @@ private fun Shell() {
     }
     LaunchedEffect(tick) { VideoLibrary.refresh(context) }
 
+    val pickFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) {
+            runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            val title = (uri.lastPathSegment ?: "Video").substringAfterLast('/').substringBeforeLast('.')
+            PlayerHost.request = PlayRequest(listOf(PlayItem(uri.toString(), title)), 0)
+        }
+    }
+    val onPickFile = { pickFile.launch(arrayOf("video/*")) }
+    val onAllFiles = {
+        runCatching {
+            context.startActivity(Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:" + context.packageName)))
+        }.onFailure {
+            context.startActivity(Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+        }
+    }
+
     val play: (List<VideoItem>, Int) -> Unit = { list, i ->
         PlayerHost.request = PlayRequest(list.map { PlayItem(it.uri.toString(), it.title) }, i)
     }
@@ -139,10 +157,10 @@ private fun Shell() {
     }
 
     Box(Modifier.fillMaxSize()) {
-        Box(Modifier.fillMaxSize().hazeSource(haze)) {
+        Box(Modifier.fillMaxSize().hazeSource(haze).then(Modifier.layerBackdrop(backdrop))) {
             when (Tab.entries[tab]) {
-                Tab.Videos -> VideosScreen(access, { launcher.launch(VideoLibrary.permissionsToRequest()) }, openSettings, { tick++ }, play)
-                Tab.Folders -> FoldersScreen(access, { launcher.launch(VideoLibrary.permissionsToRequest()) }, { tick++ }, play)
+                Tab.Videos -> VideosScreen(access, { launcher.launch(VideoLibrary.permissionsToRequest()) }, openSettings, { tick++ }, onPickFile, onAllFiles, play)
+                Tab.Folders -> FoldersScreen(access, { launcher.launch(VideoLibrary.permissionsToRequest()) }, { tick++ }, onPickFile, onAllFiles, play)
                 Tab.Photos -> PhotosScreen(Modifier.fillMaxSize())
                 Tab.Settings -> SettingsScreen()
             }
@@ -154,7 +172,7 @@ private fun Shell() {
                 .navigationBarsPadding()
                 .padding(horizontal = 20.dp, vertical = 12.dp)
                 .fillMaxWidth()
-                .glass(RoundedCornerShape(32.dp), haze, isDarkTheme())
+                .glass(RoundedCornerShape(32.dp), haze, isDarkTheme(), backdrop)
                 .padding(6.dp),
         ) {
             Tab.entries.forEachIndexed { i, t ->

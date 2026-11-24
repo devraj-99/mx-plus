@@ -15,6 +15,7 @@ object Prefs {
     var theme by mutableIntStateOf(0) // 0 system, 1 dark, 2 light
     var accent by mutableIntStateOf(0)
     var glass by mutableStateOf(true)
+    var glassStrength by mutableFloatStateOf(1f)
     var seekSeconds by mutableIntStateOf(10)
     var resume by mutableStateOf(true)
     var gestures by mutableStateOf(true)
@@ -30,6 +31,7 @@ object Prefs {
         theme = s.getInt("theme", 0)
         accent = s.getInt("accent", 0)
         glass = s.getBoolean("glass", true)
+        glassStrength = s.getFloat("glassStrength", 1f)
         seekSeconds = s.getInt("seek", 10)
         resume = s.getBoolean("resume", true)
         gestures = s.getBoolean("gestures", true)
@@ -43,6 +45,7 @@ object Prefs {
             ?.putInt("theme", theme)
             ?.putInt("accent", accent)
             ?.putBoolean("glass", glass)
+            ?.putFloat("glassStrength", glassStrength)
             ?.putInt("seek", seekSeconds)
             ?.putBoolean("resume", resume)
             ?.putBoolean("gestures", gestures)

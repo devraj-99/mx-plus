@@ -82,6 +82,18 @@ fun SettingsScreen() {
             }
             Divider()
             SwitchRow(Icons.Rounded.AutoAwesome, "Glass effects", Prefs.glass) { Prefs.glass = it; Prefs.save() }
+            Divider()
+            Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconBox(Icons.Rounded.AutoAwesome)
+                Spacer(Modifier.width(14.dp))
+                Text("Glass strength", color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, modifier = Modifier.width(120.dp))
+                androidx.compose.material3.Slider(
+                    value = Prefs.glassStrength,
+                    onValueChange = { Prefs.glassStrength = it },
+                    onValueChangeFinished = { Prefs.save() },
+                    valueRange = 0f..1.5f,
+                )
+            }
         }
 
         Section("Player") {
@@ -105,8 +117,16 @@ fun SettingsScreen() {
             }
         }
 
+        Section("Files") {
+            ValueRow(Icons.Rounded.Lock, "All files access", if (VideoLibrary.hasAllFiles()) "On" else "Off") {
+                runCatching {
+                    context.startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:" + context.packageName)))
+                }
+            }
+        }
+
         Section("About") {
-            ValueRow(Icons.Rounded.Info, "MX Plus", "v0.2.0") {}
+            ValueRow(Icons.Rounded.Info, "MX Plus", "v0.3.0") {}
             Divider()
             ValueRow(Icons.Rounded.Description, "Licenses and credits", "") { showLicenses = true }
         }

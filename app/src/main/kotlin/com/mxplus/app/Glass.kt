@@ -25,10 +25,13 @@ import dev.chrisbanes.haze.hazeEffect
  * Flat colours only: no gradients, no glow.
  */
 @Composable
-fun Modifier.glass(shape: Shape, haze: HazeState? = null, dark: Boolean = true): Modifier {
+fun Modifier.glass(shape: Shape, haze: HazeState? = null, dark: Boolean = true, backdrop: com.kyant.backdrop.backdrops.LayerBackdrop? = null): Modifier {
     val tint = if (dark) Color(0xFF000000).copy(alpha = 0.30f) else Color(0xFFFFFFFF).copy(alpha = 0.45f)
     val edge = if (dark) Color.White.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.70f)
     val fill = if (dark) Color(0xFF000000).copy(alpha = 0.42f) else Color(0xFFFFFFFF).copy(alpha = 0.70f)
+    if (Prefs.glass && backdrop != null && shape is androidx.compose.foundation.shape.CornerBasedShape && com.kyant.backdrop.isRuntimeShaderSupported()) {
+        return this.lensGlass(backdrop, shape, Prefs.glassStrength)
+    }
     return if (Prefs.glass && haze != null) {
         this
             .clip(shape)
