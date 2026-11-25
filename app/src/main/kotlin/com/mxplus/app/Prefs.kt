@@ -15,13 +15,20 @@ object Prefs {
     var theme by mutableIntStateOf(0) // 0 system, 1 dark, 2 light
     var accent by mutableIntStateOf(0)
     var glass by mutableStateOf(true)
-    var glassStrength by mutableFloatStateOf(1f)
+    var glassStrength by mutableFloatStateOf(1f) // refraction strength for lens glass
+    var glassBlur by mutableFloatStateOf(24f) // blur radius (dp) for haze glass
+    var glassOpacity by mutableFloatStateOf(0.42f) // fill/tint opacity for glass surfaces
+    var playerGlass by mutableStateOf(true) // blur glass over the video
     var seekSeconds by mutableIntStateOf(10)
+    var autoHideSec by mutableIntStateOf(4) // 0 = never hide
     var resume by mutableStateOf(true)
     var gestures by mutableStateOf(true)
     var keepOn by mutableStateOf(true)
     var autoNext by mutableStateOf(true)
     var defaultSpeed by mutableFloatStateOf(1f)
+    var subScale by mutableFloatStateOf(1f) // subtitle text scale
+    var subColor by mutableIntStateOf(0) // 0 white, 1 yellow, 2 green, 3 cyan
+    var loopMode by mutableIntStateOf(0) // 0 off, 1 all, 2 one
 
     fun init(context: Context) {
         if (sp != null) return
@@ -32,12 +39,19 @@ object Prefs {
         accent = s.getInt("accent", 0)
         glass = s.getBoolean("glass", true)
         glassStrength = s.getFloat("glassStrength", 1f)
+        glassBlur = s.getFloat("glassBlur", 24f)
+        glassOpacity = s.getFloat("glassOpacity", 0.42f)
+        playerGlass = s.getBoolean("playerGlass", true)
         seekSeconds = s.getInt("seek", 10)
+        autoHideSec = s.getInt("autoHide", 4)
         resume = s.getBoolean("resume", true)
         gestures = s.getBoolean("gestures", true)
         keepOn = s.getBoolean("keepOn", true)
         autoNext = s.getBoolean("autoNext", true)
         defaultSpeed = s.getFloat("speed", 1f)
+        subScale = s.getFloat("subScale", 1f)
+        subColor = s.getInt("subColor", 0)
+        loopMode = s.getInt("loopMode", 0)
     }
 
     fun save() {
@@ -46,12 +60,19 @@ object Prefs {
             ?.putInt("accent", accent)
             ?.putBoolean("glass", glass)
             ?.putFloat("glassStrength", glassStrength)
+            ?.putFloat("glassBlur", glassBlur)
+            ?.putFloat("glassOpacity", glassOpacity)
+            ?.putBoolean("playerGlass", playerGlass)
             ?.putInt("seek", seekSeconds)
+            ?.putInt("autoHide", autoHideSec)
             ?.putBoolean("resume", resume)
             ?.putBoolean("gestures", gestures)
             ?.putBoolean("keepOn", keepOn)
             ?.putBoolean("autoNext", autoNext)
             ?.putFloat("speed", defaultSpeed)
+            ?.putFloat("subScale", subScale)
+            ?.putInt("subColor", subColor)
+            ?.putInt("loopMode", loopMode)
             ?.apply()
     }
 

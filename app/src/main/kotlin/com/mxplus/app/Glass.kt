@@ -20,15 +20,17 @@ import dev.chrisbanes.haze.HazeTint
 import dev.chrisbanes.haze.hazeEffect
 
 /**
- * Glass surface. With a [haze] state it blurs the Compose content behind it.
- * Without one (over the video surface, which cannot be blurred) it is a flat translucent fill.
+ * Glass surface. With a [haze] state it blurs the content behind it (works over
+ * Compose content and over TextureView video). With a Kyant [backdrop] and a
+ * corner-based shape it bends light through the refraction lens.
  * Flat colours only: no gradients, no glow.
  */
 @Composable
 fun Modifier.glass(shape: Shape, haze: HazeState? = null, dark: Boolean = true, backdrop: com.kyant.backdrop.backdrops.LayerBackdrop? = null): Modifier {
-    val tint = if (dark) Color(0xFF000000).copy(alpha = 0.30f) else Color(0xFFFFFFFF).copy(alpha = 0.45f)
+    val opacity = Prefs.glassOpacity.coerceIn(0.05f, 0.85f)
+    val tint = if (dark) Color.Black.copy(alpha = opacity * 0.7f) else Color.White.copy(alpha = opacity)
     val edge = if (dark) Color.White.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.70f)
-    val fill = if (dark) Color(0xFF000000).copy(alpha = 0.42f) else Color(0xFFFFFFFF).copy(alpha = 0.70f)
+    val fill = if (dark) Color.Black.copy(alpha = opacity) else Color.White.copy(alpha = (opacity + 0.25f).coerceAtMost(0.85f))
     if (Prefs.glass && backdrop != null && shape is androidx.compose.foundation.shape.CornerBasedShape && com.kyant.backdrop.isRuntimeShaderSupported()) {
         return this.lensGlass(backdrop, shape, Prefs.glassStrength)
     }
@@ -36,7 +38,7 @@ fun Modifier.glass(shape: Shape, haze: HazeState? = null, dark: Boolean = true, 
         this
             .clip(shape)
             .hazeEffect(state = haze) {
-                blurRadius = 28.dp
+                blurRadius = Prefs.glassBlur.coerceIn(0f, 60f).dp
                 tints = listOf(HazeTint(tint))
             }
             .border(1.dp, edge, shape)

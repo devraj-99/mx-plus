@@ -86,6 +86,10 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.lazy.grid.items
+import com.mxplus.app.glass
+import com.mxplus.app.pressable
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeSource
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.sqrt
@@ -385,10 +389,12 @@ private fun PhotoViewer(
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
         val bgAlpha = (1f - (abs(dragY) / 900f)).coerceIn(0.2f, 1f)
+        val viewerHaze = remember { HazeState() }
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = bgAlpha))
+                .hazeSource(viewerHaze)
                 .pointerInput(zoomed) {
                     if (!zoomed) {
                         detectVerticalDragGestures(
@@ -421,7 +427,9 @@ private fun PhotoViewer(
 
             if (chromeVisible && dragY == 0f) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 4.dp, vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp)
+                        .glass(RoundedCornerShape(24.dp), viewerHaze, true)
+                        .padding(horizontal = 6.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     IconButton(onClick = onClose) {
@@ -435,7 +443,9 @@ private fun PhotoViewer(
                     }
                 }
                 Column(
-                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding(),
+                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding()
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                        .glass(RoundedCornerShape(24.dp), viewerHaze, true),
                 ) {
                     LazyRow(
                         state = strip,

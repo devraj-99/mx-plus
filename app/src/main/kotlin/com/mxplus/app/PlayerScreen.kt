@@ -1,13 +1,23 @@
 package com.mxplus.app
 
 import android.app.Activity
+import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.pm.ActivityInfo
 import android.media.AudioManager
+import android.net.Uri
+import android.util.Rational
+import android.view.TextureView
+import android.view.ViewGroup
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -30,16 +40,20 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material.icons.rounded.Audiotrack
+import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Forward10
 import androidx.compose.material.icons.rounded.Forward30
 import androidx.compose.material.icons.rounded.Forward5
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.LockOpen
 import androidx.compose.material.icons.rounded.Pause
-import androidx.compose.material.icons.rounded.PlaylistPlay
+import androidx.compose.material.icons.rounded.PictureInPictureAlt
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Repeat
+import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.rounded.Replay10
 import androidx.compose.material.icons.rounded.Replay30
 import androidx.compose.material.icons.rounded.Replay5
@@ -57,6 +71,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -67,11 +82,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -83,14 +100,18 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.VideoSize
+import androidx.media3.common.text.Cue
+import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeSource
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 
@@ -103,6 +124,8 @@ private val Speeds = listOf(0.25f, 0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 3f)
 
 private fun speedLabel(s: Float): String = (if (s % 1f == 0f) "%.0f".format(s) else "%.2f".format(s).trimEnd('0')) + "x"
 
+val SubColors = listOf(Color.White, Color(0xFFFFEB3B), Color(0xFF69F0AE), Color(0xFF40C4FF))
+
 @androidx.annotation.OptIn(UnstableApi::class)
 @Composable
 fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
@@ -110,7 +133,9 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
     val activity = context as Activity
     val view = LocalView.current
     val dark = true
+    val haze = remember { HazeState() }
 
+    var playlist by remember { mutableStateOf(request.items) }
     var currentIndex by remember { mutableIntStateOf(request.index) }
     var titleText by remember { mutableStateOf(request.items[request.index].title) }
     var pos by remember { mutableLongStateOf(0L) }
@@ -119,14 +144,21 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
     var buffering by remember { mutableStateOf(true) }
     var speed by remember { mutableStateOf(Prefs.defaultSpeed) }
     var resize by remember { mutableIntStateOf(0) } // 0 fit, 1 fill, 2 zoom
+    var zoom by remember { mutableFloatStateOf(1f) }
     var showControls by remember { mutableStateOf(true) }
     var interaction by remember { mutableIntStateOf(0) }
     var locked by remember { mutableStateOf(false) }
     var scrub by remember { mutableStateOf<Long?>(null) }
     var hud by remember { mutableStateOf<String?>(null) }
     var hudTick by remember { mutableIntStateOf(0) }
-    var dialog by remember { mutableStateOf(0) } // 0 none, 1 speed, 2 audio, 3 subs, 4 playlist
+    var dialog by remember { mutableStateOf(0) } // 0 none, 1 speed, 2 audio, 3 subs, 4 playlist, 5 sleep
     var error by remember { mutableStateOf<String?>(null) }
+    var cues by remember { mutableStateOf<List<Cue>>(emptyList()) }
+    var sleepAt by remember { mutableStateOf<Long?>(null) }
+    var videoAspect by remember { mutableFloatStateOf(0f) }
+    var boosted by remember { mutableStateOf(false) }
+    val attachedTv = remember { arrayOfNulls<TextureView>(1) }
+    var speedBeforeBoost by remember { mutableFloatStateOf(1f) }
 
     val player = remember {
         ExoPlayer.Builder(context).build().apply {
@@ -137,6 +169,11 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
             val resumeAt = if (Prefs.resume) Prefs.resumePosition(start.uri) else 0L
             setMediaItems(mediaItems, request.index, resumeAt)
             setPlaybackSpeed(Prefs.defaultSpeed)
+            repeatMode = when (Prefs.loopMode) {
+                1 -> Player.REPEAT_MODE_ALL
+                2 -> Player.REPEAT_MODE_ONE
+                else -> Player.REPEAT_MODE_OFF
+            }
             prepare()
             playWhenReady = true
         }
@@ -145,6 +182,30 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
     fun flash(text: String) {
         hud = text
         hudTick++
+    }
+
+    val subPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) {
+            runCatching { context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            val mime = when {
+                uri.toString().endsWith(".ass", true) || uri.toString().endsWith(".ssa", true) -> MimeTypes.TEXT_SSA
+                uri.toString().endsWith(".vtt", true) -> MimeTypes.TEXT_VTT
+                else -> MimeTypes.APPLICATION_SUBRIP
+            }
+            val sub = MediaItem.SubtitleConfiguration.Builder(uri).setMimeType(mime).setSelectionFlags(C.SELECTION_FLAG_DEFAULT).build()
+            val idx = player.currentMediaItemIndex
+            val at = player.currentPosition
+            val items = playlist.mapIndexed { i, it ->
+                val b = MediaItem.Builder().setUri(it.uri).setMediaMetadata(MediaMetadata.Builder().setTitle(it.title).build())
+                if (i == idx) b.setSubtitleConfigurations(listOf(sub))
+                b.build()
+            }
+            player.setMediaItems(items, idx, at)
+            player.prepare()
+            player.play()
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).build()
+            flash("Subtitle file loaded")
+        }
     }
 
     DisposableEffect(player) {
@@ -157,7 +218,7 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED) {
                     if (!(Prefs.autoNext && player.hasNextMediaItem())) {
-                        Prefs.saveResume(request.items[player.currentMediaItemIndex].uri, 0, 0)
+                        Prefs.saveResume(playlist[player.currentMediaItemIndex].uri, 0, 0)
                         onClose()
                     }
                 }
@@ -165,12 +226,17 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
 
             override fun onVideoSizeChanged(size: VideoSize) {
                 if (size.width > 0 && size.height > 0) {
+                    videoAspect = size.width * size.pixelWidthHeightRatio / size.height
                     activity.requestedOrientation = if (size.height > size.width) {
                         ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
                     } else {
                         ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                     }
                 }
+            }
+
+            override fun onCues(cueGroup: CueGroup) {
+                cues = cueGroup.cues
             }
 
             override fun onPlayerError(e: PlaybackException) {
@@ -180,7 +246,7 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
         player.addListener(listener)
         onDispose {
             runCatching {
-                val item = request.items.getOrNull(player.currentMediaItemIndex)
+                val item = playlist.getOrNull(player.currentMediaItemIndex)
                 if (item != null) Prefs.saveResume(item.uri, player.currentPosition, player.duration.coerceAtLeast(0))
             }
             player.removeListener(listener)
@@ -188,7 +254,6 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
         }
     }
 
-    // immersive + orientation + keep screen on
     DisposableEffect(Unit) {
         val window = activity.window
         val controller = WindowCompat.getInsetsController(window, view)
@@ -212,19 +277,25 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
             dur = player.duration.coerceAtLeast(0L)
             playing = player.isPlaying
             buffering = player.playbackState == Player.STATE_BUFFERING
-            speed = player.playbackParameters.speed
+            if (!boosted) speed = player.playbackParameters.speed
+            val deadline = sleepAt
+            if (deadline != null && System.currentTimeMillis() >= deadline) {
+                sleepAt = null
+                player.pause()
+                flash("Sleep timer: paused")
+            }
             saveTick++
             if (saveTick >= 20) {
                 saveTick = 0
-                request.items.getOrNull(player.currentMediaItemIndex)?.let { Prefs.saveResume(it.uri, player.currentPosition, dur) }
+                playlist.getOrNull(player.currentMediaItemIndex)?.let { Prefs.saveResume(it.uri, player.currentPosition, dur) }
             }
             delay(250)
         }
     }
 
     LaunchedEffect(showControls, playing, interaction) {
-        if (showControls && playing && !locked) {
-            delay(3500)
+        if (showControls && playing && !locked && Prefs.autoHideSec > 0) {
+            delay(Prefs.autoHideSec * 1000L)
             showControls = false
         }
     }
@@ -248,33 +319,80 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
         pos = target
     }
 
+    fun enterPip() {
+        if (android.os.Build.VERSION.SDK_INT >= 26) {
+            runCatching {
+                val ar = if (videoAspect in 0.4f..2.4f) Rational((videoAspect * 1000).toInt(), 1000) else Rational(16, 9)
+                activity.enterPictureInPictureMode(PictureInPictureParams.Builder().setAspectRatio(ar).build())
+            }
+        }
+    }
+
+    val glassHaze = if (Prefs.glass && Prefs.playerGlass) haze else null
+
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().hazeSource(haze).graphicsLayer { scaleX = zoom; scaleY = zoom },
             factory = { ctx ->
-                PlayerView(ctx).apply {
-                    useController = false
-                    this.player = player
-                    setShutterBackgroundColor(android.graphics.Color.BLACK)
-                    keepScreenOn = true
+                AspectRatioFrameLayout(ctx).apply {
+                    setBackgroundColor(android.graphics.Color.BLACK)
+                    addView(TextureView(ctx), ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
                 }
             },
-            update = {
-                it.resizeMode = when (resize) {
+            update = { frame ->
+                frame.setAspectRatio(videoAspect)
+                frame.resizeMode = when (resize) {
                     1 -> AspectRatioFrameLayout.RESIZE_MODE_FILL
                     2 -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                     else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
                 }
+                val tv = frame.getChildAt(0) as? TextureView
+                if (tv != null && attachedTv[0] !== tv) {
+                    player.setVideoTextureView(tv)
+                    attachedTv[0] = tv
+                }
             },
         )
 
-        // Gesture layer
+        // Gesture layer: tap, double-tap seek, long-press 2x, drags, pinch zoom
         Box(
             Modifier
                 .fillMaxSize()
                 .pointerInput(Unit) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        do {
+                            val event = awaitPointerEvent()
+                            if (event.changes.count { it.pressed } >= 2) {
+                                val z = event.calculateZoom()
+                                if (z != 1f) {
+                                    zoom = (zoom * z).coerceIn(1f, 4f)
+                                    if (zoom > 1.02f && resize != 2) resize = 2
+                                    event.changes.forEach { it.consume() }
+                                }
+                            }
+                        } while (event.changes.any { it.pressed })
+                    }
+                }
+                .pointerInput(Unit) {
                     detectTapGestures(
+                        onPress = {
+                            val released = runCatching { tryAwaitRelease() }.getOrDefault(true)
+                            if (released && boosted) {
+                                boosted = false
+                                player.setPlaybackSpeed(speedBeforeBoost)
+                                flash(speedLabel(speedBeforeBoost))
+                            }
+                        },
                         onTap = { showControls = !controlsState; interaction++ },
+                        onLongPress = {
+                            if (!lockedState && player.isPlaying) {
+                                speedBeforeBoost = player.playbackParameters.speed
+                                boosted = true
+                                player.setPlaybackSpeed(2f)
+                                flash("2x")
+                            }
+                        },
                         onDoubleTap = { offset ->
                             if (!lockedState) {
                                 val ms = Prefs.seekSeconds * 1000L
@@ -361,7 +479,28 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
         }
 
         error?.let {
-            Text(it, color = Color.White, modifier = Modifier.align(Alignment.Center).glass(RoundedCornerShape(16.dp), null, dark).padding(20.dp))
+            Text(it, color = Color.White, modifier = Modifier.align(Alignment.Center).glass(RoundedCornerShape(16.dp), glassHaze, dark).padding(20.dp))
+        }
+
+        // Subtitles overlay
+        if (cues.isNotEmpty()) {
+            Column(
+                Modifier.align(Alignment.BottomCenter).padding(bottom = if (showControls && !locked) 150.dp else 48.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                cues.forEach { cue ->
+                    cue.text?.let { t ->
+                        Text(
+                            t.toString(),
+                            color = SubColors[Prefs.subColor.coerceIn(0, SubColors.size - 1)],
+                            fontSize = (17f * Prefs.subScale).sp,
+                            fontWeight = FontWeight.Medium,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 2.dp).background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 2.dp),
+                        )
+                    }
+                }
+            }
         }
 
         hud?.let {
@@ -370,7 +509,7 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
                 color = Color.White,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Medium,
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 28.dp).glass(RoundedCornerShape(20.dp), null, dark).padding(horizontal = 16.dp, vertical = 8.dp),
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 28.dp).glass(RoundedCornerShape(20.dp), glassHaze, dark).padding(horizontal = 16.dp, vertical = 8.dp),
             )
         }
 
@@ -384,7 +523,7 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Box(
-                        Modifier.size(78.dp).glass(CircleShape, null, dark).pressable { locked = false; showControls = true },
+                        Modifier.size(78.dp).glass(CircleShape, glassHaze, dark).pressable { locked = false; showControls = true },
                         contentAlignment = Alignment.Center,
                     ) { Icon(Icons.Rounded.Lock, "Unlock", tint = Color.White, modifier = Modifier.size(34.dp)) }
                     Spacer(Modifier.height(10.dp))
@@ -393,12 +532,11 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
             }
         } else if (showControls) {
             Box(Modifier.fillMaxSize().then(safe).padding(horizontal = 20.dp)) {
-                // Header
                 Row(
                     Modifier.align(Alignment.TopStart).fillMaxWidth().padding(top = 16.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    GlassIcon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", 44.dp, 24.dp) { onClose() }
+                    GlassIcon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", 44.dp, 24.dp, glassHaze) { onClose() }
                     Spacer(Modifier.width(12.dp))
                     Text(
                         titleText,
@@ -407,31 +545,31 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f).glass(RoundedCornerShape(22.dp), null, dark).padding(horizontal = 16.dp, vertical = 10.dp),
+                        modifier = Modifier.weight(1f).glass(RoundedCornerShape(22.dp), glassHaze, dark).padding(horizontal = 16.dp, vertical = 10.dp),
                     )
                     Spacer(Modifier.width(12.dp))
-                    if (request.items.size > 1) {
-                        GlassIcon(Icons.Rounded.PlaylistPlay, "Playlist", 44.dp, 24.dp) { dialog = 4; interaction++ }
+                    GlassIcon(Icons.Rounded.PictureInPictureAlt, "Picture in picture", 44.dp, 24.dp, glassHaze) { enterPip() }
+                    Spacer(Modifier.width(10.dp))
+                    if (playlist.size > 1) {
+                        GlassIcon(Icons.AutoMirrored.Rounded.PlaylistPlay, "Playlist", 44.dp, 24.dp, glassHaze) { dialog = 4; interaction++ }
                         Spacer(Modifier.width(10.dp))
                     }
-                    GlassIcon(Icons.Rounded.LockOpen, "Lock controls", 44.dp, 24.dp) { locked = true; showControls = true }
+                    GlassIcon(Icons.Rounded.LockOpen, "Lock controls", 44.dp, 24.dp, glassHaze) { locked = true; showControls = true }
                 }
 
-                // Center controls
                 Row(
                     Modifier.align(Alignment.Center),
                     horizontalArrangement = Arrangement.spacedBy(36.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    GlassIcon(backIcon(Prefs.seekSeconds), "Back", 64.dp, 32.dp) { seekBy(-Prefs.seekSeconds * 1000L); interaction++ }
-                    GlassIcon(if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play or pause", 88.dp, 48.dp) {
+                    GlassIcon(backIcon(Prefs.seekSeconds), "Back", 64.dp, 32.dp, glassHaze) { seekBy(-Prefs.seekSeconds * 1000L); interaction++ }
+                    GlassIcon(if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play or pause", 88.dp, 48.dp, glassHaze) {
                         if (player.isPlaying) player.pause() else player.play()
                         interaction++
                     }
-                    GlassIcon(fwdIcon(Prefs.seekSeconds), "Forward", 64.dp, 32.dp) { seekBy(Prefs.seekSeconds * 1000L); interaction++ }
+                    GlassIcon(fwdIcon(Prefs.seekSeconds), "Forward", 64.dp, 32.dp, glassHaze) { seekBy(Prefs.seekSeconds * 1000L); interaction++ }
                 }
 
-                // Bottom
                 Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(bottom = 14.dp)) {
                     Slider(
                         value = displayPos.coerceIn(0L, dur.coerceAtLeast(1L)).toFloat(),
@@ -448,23 +586,35 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
                         ),
                     )
                     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                        TimePill(formatTime(displayPos))
-                        TimePill(formatTime(dur))
+                        TimePill(formatTime(displayPos), glassHaze)
+                        TimePill(formatTime(dur), glassHaze)
                     }
                     Spacer(Modifier.height(10.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                         Row(
-                            Modifier.glass(RoundedCornerShape(26.dp), null, dark).padding(horizontal = 6.dp, vertical = 2.dp),
+                            Modifier.glass(RoundedCornerShape(26.dp), glassHaze, dark).padding(horizontal = 6.dp, vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            if (request.items.size > 1) {
+                            if (playlist.size > 1) {
                                 PillButton("Prev", Icons.Rounded.SkipPrevious) { if (player.hasPreviousMediaItem()) player.seekToPreviousMediaItem(); interaction++ }
                             }
                             PillButton(listOf("Fit", "Fill", "Zoom")[resize], Icons.Rounded.AspectRatio) { resize = (resize + 1) % 3; interaction++ }
                             PillButton(speedLabel(speed), Icons.Rounded.Speed) { dialog = 1; interaction++ }
                             PillButton("Subs", Icons.Rounded.Subtitles) { dialog = 3; interaction++ }
                             PillButton("Audio", Icons.Rounded.Audiotrack) { dialog = 2; interaction++ }
-                            if (request.items.size > 1) {
+                            PillButton("Sleep", Icons.Rounded.Bedtime) { dialog = 5; interaction++ }
+                            PillButton("", when (Prefs.loopMode) { 2 -> Icons.Rounded.RepeatOne; else -> Icons.Rounded.Repeat }, tint = if (Prefs.loopMode == 0) Color.White else MaterialTheme.colorScheme.primary) {
+                                Prefs.loopMode = (Prefs.loopMode + 1) % 3
+                                Prefs.save()
+                                player.repeatMode = when (Prefs.loopMode) {
+                                    1 -> Player.REPEAT_MODE_ALL
+                                    2 -> Player.REPEAT_MODE_ONE
+                                    else -> Player.REPEAT_MODE_OFF
+                                }
+                                flash(when (Prefs.loopMode) { 1 -> "Repeat all"; 2 -> "Repeat one"; else -> "Repeat off" })
+                                interaction++
+                            }
+                            if (playlist.size > 1) {
                                 PillButton("Next", Icons.Rounded.SkipNext) { if (player.hasNextMediaItem()) player.seekToNextMediaItem(); interaction++ }
                             }
                         }
@@ -500,23 +650,40 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
                     for (t in 0 until g.length) rows += Triple(g, t, trackLabel(g.getTrackFormat(t), rows.size + 1))
                 }
                 val off = player.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT) || rows.none { it.first.isTrackSelected(it.second) }
-                val labels = listOf("Off") + rows.map { it.third }
+                val labels = listOf("Off") + rows.map { it.third } + listOf("Load subtitle file")
                 val selected = if (off) 0 else rows.indexOfFirst { it.first.isTrackSelected(it.second) } + 1
                 PickerDialog("Subtitles", labels, selected, { i ->
-                    if (i == 0) {
-                        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
-                    } else {
-                        val (g, t, _) = rows[i - 1]
-                        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                            .setOverrideForType(TrackSelectionOverride(g.mediaTrackGroup, t)).build()
+                    when {
+                        i == 0 -> {
+                            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
+                            dialog = 0
+                        }
+                        i == labels.size - 1 -> {
+                            dialog = 0
+                            subPicker.launch(arrayOf("text/*", "application/x-subrip", "application/octet-stream"))
+                        }
+                        else -> {
+                            val (g, t, _) = rows[i - 1]
+                            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                                .setOverrideForType(TrackSelectionOverride(g.mediaTrackGroup, t)).build()
+                            dialog = 0
+                        }
                     }
+                }) { dialog = 0 }
+            }
+            4 -> PickerDialog("Playlist", playlist.map { it.title }, currentIndex, { i ->
+                player.seekToDefaultPosition(i); dialog = 0
+            }) { dialog = 0 }
+            5 -> {
+                val opts = listOf("Off", "15 minutes", "30 minutes", "45 minutes", "60 minutes")
+                val mins = listOf(0, 15, 30, 45, 60)
+                PickerDialog("Sleep timer", opts, if (sleepAt == null) 0 else -1, { i ->
+                    sleepAt = if (mins[i] == 0) null else System.currentTimeMillis() + mins[i] * 60_000L
+                    if (mins[i] > 0) flash("Sleep in ${mins[i]} min")
                     dialog = 0
                 }) { dialog = 0 }
             }
-            4 -> PickerDialog("Playlist", request.items.map { it.title }, currentIndex, { i ->
-                player.seekToDefaultPosition(i); dialog = 0
-            }) { dialog = 0 }
         }
     }
 }
@@ -531,33 +698,33 @@ private fun backIcon(s: Int): ImageVector = when (s) { 5 -> Icons.Rounded.Replay
 private fun fwdIcon(s: Int): ImageVector = when (s) { 5 -> Icons.Rounded.Forward5; 30 -> Icons.Rounded.Forward30; else -> Icons.Rounded.Forward10 }
 
 @Composable
-private fun GlassIcon(icon: ImageVector, desc: String, size: androidx.compose.ui.unit.Dp, iconSize: androidx.compose.ui.unit.Dp, onClick: () -> Unit) {
+private fun GlassIcon(icon: ImageVector, desc: String, size: androidx.compose.ui.unit.Dp, iconSize: androidx.compose.ui.unit.Dp, haze: HazeState?, onClick: () -> Unit) {
     Box(
-        Modifier.size(size).glass(CircleShape, null, true).pressable(onClick),
+        Modifier.size(size).glass(CircleShape, haze, true).pressable(onClick),
         contentAlignment = Alignment.Center,
     ) { Icon(icon, desc, tint = Color.White, modifier = Modifier.size(iconSize)) }
 }
 
 @Composable
-private fun TimePill(text: String) {
+private fun TimePill(text: String, haze: HazeState?) {
     Text(
         text,
         color = Color.White,
         fontSize = 12.sp,
         fontWeight = FontWeight.Medium,
-        modifier = Modifier.glass(RoundedCornerShape(12.dp), null, true).padding(horizontal = 10.dp, vertical = 4.dp),
+        modifier = Modifier.glass(RoundedCornerShape(12.dp), haze, true).padding(horizontal = 10.dp, vertical = 4.dp),
     )
 }
 
 @Composable
-private fun PillButton(label: String, icon: ImageVector, onClick: () -> Unit) {
+private fun PillButton(label: String, icon: ImageVector, tint: Color = Color.White, onClick: () -> Unit) {
     Row(
         Modifier.pressable(onClick).padding(horizontal = 12.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, label, tint = Color.White, modifier = Modifier.size(18.dp))
-        Text(label, color = Color.White, fontSize = 13.sp, maxLines = 1, softWrap = false)
+        Icon(icon, label, tint = tint, modifier = Modifier.size(18.dp))
+        if (label.isNotEmpty()) Text(label, color = tint, fontSize = 13.sp, maxLines = 1, softWrap = false)
     }
 }
 
@@ -565,7 +732,7 @@ private fun PillButton(label: String, icon: ImageVector, onClick: () -> Unit) {
 private fun PickerDialog(title: String, options: List<String>, selected: Int, onPick: (Int) -> Unit, onDismiss: () -> Unit) {
     Dialog(onDismissRequest = onDismiss) {
         Column(
-            Modifier.fillMaxWidth().clipCard().background(Color(0xFF1C1C1F)).padding(vertical = 14.dp),
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Color(0xFF1C1C1F)).padding(vertical = 14.dp),
         ) {
             Text(title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
             LazyColumn(Modifier.height((options.size.coerceAtMost(7) * 52).dp)) {
@@ -588,5 +755,3 @@ private fun PickerDialog(title: String, options: List<String>, selected: Int, on
         }
     }
 }
-
-private fun Modifier.clipCard(): Modifier = this.then(Modifier.clip(RoundedCornerShape(20.dp)))

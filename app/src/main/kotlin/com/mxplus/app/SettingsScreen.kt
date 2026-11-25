@@ -83,6 +83,8 @@ fun SettingsScreen() {
             Divider()
             SwitchRow(Icons.Rounded.AutoAwesome, "Glass effects", Prefs.glass) { Prefs.glass = it; Prefs.save() }
             Divider()
+            SwitchRow(Icons.Rounded.AutoAwesome, "Glass over video player", Prefs.playerGlass) { Prefs.playerGlass = it; Prefs.save() }
+            Divider()
             Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconBox(Icons.Rounded.AutoAwesome)
                 Spacer(Modifier.width(14.dp))
@@ -94,6 +96,14 @@ fun SettingsScreen() {
                     valueRange = 0f..1.5f,
                 )
             }
+        }
+
+        Section("Liquid Glass") {
+            SliderRow("Blur", Prefs.glassBlur, 0f..60f) { Prefs.glassBlur = it }
+            Divider()
+            SliderRow("Opacity", Prefs.glassOpacity, 0.05f..0.85f) { Prefs.glassOpacity = it }
+            Divider()
+            SliderRow("Refraction", Prefs.glassStrength, 0f..1.5f) { Prefs.glassStrength = it }
         }
 
         Section("Player") {
@@ -108,6 +118,24 @@ fun SettingsScreen() {
             SwitchRow(Icons.Rounded.SkipNext, "Play next video automatically", Prefs.autoNext) { Prefs.autoNext = it; Prefs.save() }
             Divider()
             SwitchRow(Icons.Rounded.ScreenLockPortrait, "Keep screen on while playing", Prefs.keepOn) { Prefs.keepOn = it; Prefs.save() }
+            Divider()
+            ValueRow(Icons.Rounded.FastForward, "Hide controls after", if (Prefs.autoHideSec == 0) "Never" else "${Prefs.autoHideSec} sec") { picker = 4 }
+        }
+
+        Section("Subtitles") {
+            SliderRow("Size", Prefs.subScale, 0.6f..2f) { Prefs.subScale = it }
+            Divider()
+            Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconBox(Icons.Rounded.Palette)
+                Spacer(Modifier.width(14.dp))
+                Text("Colour", color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, modifier = Modifier.weight(1f))
+                SubColors.forEachIndexed { i, color ->
+                    Box(
+                        Modifier.padding(start = 8.dp).size(if (Prefs.subColor == i) 26.dp else 22.dp).clip(CircleShape).background(color)
+                            .clickable { Prefs.subColor = i; Prefs.save() },
+                    )
+                }
+            }
         }
 
         Section("Access") {
@@ -126,7 +154,7 @@ fun SettingsScreen() {
         }
 
         Section("About") {
-            ValueRow(Icons.Rounded.Info, "MX Plus", "v0.3.0") {}
+            ValueRow(Icons.Rounded.Info, "MX Plus", "v0.4.0") {}
             Divider()
             ValueRow(Icons.Rounded.Description, "Licenses and credits", "") { showLicenses = true }
         }
@@ -142,6 +170,10 @@ fun SettingsScreen() {
         3 -> {
             val opts = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
             Picker("Default speed", opts.map { speedText(it) }, opts.indexOf(Prefs.defaultSpeed), { Prefs.defaultSpeed = opts[it]; Prefs.save(); picker = 0 }) { picker = 0 }
+        }
+        4 -> {
+            val opts = listOf(0, 2, 4, 6, 10)
+            Picker("Hide controls after", opts.map { if (it == 0) "Never" else "$it sec" }, opts.indexOf(Prefs.autoHideSec), { Prefs.autoHideSec = opts[it]; Prefs.save(); picker = 0 }) { picker = 0 }
         }
     }
     if (showLicenses) {
@@ -163,6 +195,21 @@ fun SettingsScreen() {
 }
 
 private fun speedText(s: Float) = (if (s % 1f == 0f) "%.0f".format(s) else "%.2f".format(s).trimEnd('0')) + "x"
+
+@Composable
+private fun SliderRow(label: String, value: Float, range: ClosedFloatingPointRange<Float>, onChange: (Float) -> Unit) {
+    Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconBox(Icons.Rounded.AutoAwesome)
+        Spacer(Modifier.width(14.dp))
+        Text(label, color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, modifier = Modifier.width(90.dp))
+        androidx.compose.material3.Slider(
+            value = value,
+            onValueChange = onChange,
+            onValueChangeFinished = { Prefs.save() },
+            valueRange = range,
+        )
+    }
+}
 
 @Composable
 private fun Section(title: String, content: @Composable () -> Unit) {

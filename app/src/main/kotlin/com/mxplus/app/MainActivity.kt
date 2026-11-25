@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.VideoLibrary
@@ -77,6 +78,15 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (PlayerHost.request != null && android.os.Build.VERSION.SDK_INT >= 26) {
+            runCatching {
+                enterPictureInPictureMode(android.app.PictureInPictureParams.Builder().setAspectRatio(android.util.Rational(16, 9)).build())
+            }
+        }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -101,6 +111,7 @@ private enum class Tab(val label: String, val icon: ImageVector) {
     Videos("Videos", Icons.Rounded.VideoLibrary),
     Folders("Folders", Icons.Rounded.Folder),
     Photos("Photos", Icons.Rounded.PhotoLibrary),
+    Music("Music", Icons.Rounded.MusicNote),
     Settings("Settings", Icons.Rounded.Settings),
 }
 
@@ -163,6 +174,7 @@ private fun Shell() {
                 Tab.Videos -> VideosScreen(access, { launcher.launch(VideoLibrary.permissionsToRequest()) }, openSettings, { tick++ }, onPickFile, onAllFiles, play)
                 Tab.Folders -> FoldersScreen(access, { launcher.launch(VideoLibrary.permissionsToRequest()) }, { tick++ }, onPickFile, onAllFiles, play)
                 Tab.Photos -> PhotosScreen(Modifier.fillMaxSize())
+                Tab.Music -> MusicScreen(haze, backdrop)
                 Tab.Settings -> SettingsScreen()
             }
         }
