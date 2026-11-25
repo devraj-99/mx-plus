@@ -400,7 +400,7 @@ private fun EmptyState(text: String, onRefresh: () -> Unit, onPickFile: () -> Un
 
 @Composable
 private fun PermissionCard(onRequest: () -> Unit, onPickFile: () -> Unit, onAllFiles: () -> Unit) {
-    Column(Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterVertically, verticalArrangement = Arrangement.Center) {
+    Column(Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Text("Allow access to your videos", color = MaterialTheme.colorScheme.onBackground, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(8.dp))
         Text("MX Plus only reads media on this phone. Nothing is uploaded.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
