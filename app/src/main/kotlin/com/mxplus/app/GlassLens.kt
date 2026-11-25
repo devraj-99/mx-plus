@@ -163,7 +163,7 @@ fun Modifier.lensGlass(backdrop: LayerBackdrop, shape: CornerBasedShape, strengt
         },
         shadow = null,
         onDrawSurface = {
-            drawRect(Color.White.copy(alpha = 0.22f))
+            drawRect(Color.White.copy(alpha = 0.25f))
         },
     ).border(1.dp, Color.White.copy(alpha = 0.24f), shape)
 }

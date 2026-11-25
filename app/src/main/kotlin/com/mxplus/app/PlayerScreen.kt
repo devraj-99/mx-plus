@@ -87,6 +87,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.animation.core.Easing
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -115,7 +120,11 @@ import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import dev.chrisbanes.haze.HazeProgressive
 import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeEffect
 import dev.chrisbanes.haze.hazeSource
 import kotlinx.coroutines.delay
 import kotlin.math.abs
@@ -139,6 +148,7 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
     val view = LocalView.current
     val dark = true
     val haze = remember { HazeState() }
+    val playerBackdrop = rememberLayerBackdrop()
 
     var playlist by remember { mutableStateOf(request.items) }
     var currentIndex by remember { mutableIntStateOf(request.index) }
@@ -365,14 +375,18 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
     }
 
     val glassHaze = if (Prefs.glass && Prefs.playerGlass) haze else null
+    val playerLens = if (Prefs.glass && Prefs.playerGlass) playerBackdrop else null
 
     LaunchedEffect(Prefs.bright, Prefs.contrast, Prefs.saturate, Prefs.hue) {
         videoFrame?.let { VisualEnhancer.apply(it) }
     }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
+        // NETMAX method: capture the TextureView video into BOTH a Kyant LayerBackdrop
+        // (for the refraction lens) and a Haze source (for edge blur). No Compose
+        // graphicsLayer on this chain - zoom is applied to the TextureView itself.
         AndroidView(
-            modifier = Modifier.fillMaxSize().hazeSource(haze).graphicsLayer { scaleX = zoom; scaleY = zoom },
+            modifier = Modifier.fillMaxSize().layerBackdrop(playerBackdrop).hazeSource(haze),
             factory = { ctx ->
                 AspectRatioFrameLayout(ctx).apply {
                     setBackgroundColor(android.graphics.Color.BLACK)
@@ -388,9 +402,12 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
                     else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
                 }
                 val tv = frame.getChildAt(0) as? TextureView
-                if (tv != null && attachedTv[0] !== tv) {
-                    player.setVideoTextureView(tv)
-                    attachedTv[0] = tv
+                if (tv != null) {
+                    if (tv.scaleX != zoom) { tv.scaleX = zoom; tv.scaleY = zoom }
+                    if (attachedTv[0] !== tv) {
+                        player.setVideoTextureView(tv)
+                        attachedTv[0] = tv
+                    }
                 }
             },
         )
@@ -512,6 +529,37 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
                 },
         )
 
+        // NETMAX-style edge blur: progressive blur of the live video at the top and
+        // bottom edges, Instagram-style fade, no black gradient band.
+        if (glassHaze != null && showControls) {
+            Box(
+                Modifier.fillMaxWidth().height(160.dp).align(Alignment.TopCenter)
+                    .playerEdgeBlurFade(top = true)
+                    .hazeEffect(haze) {
+                        blurRadius = (Prefs.glassBlur * 0.625f).coerceIn(0f, 32f).dp
+                        noiseFactor = 0.012f
+                        progressive = HazeProgressive.verticalGradient(
+                            easing = PlayerEdgeBlurEasing,
+                            startIntensity = 1f,
+                            endIntensity = 0f,
+                        )
+                    },
+            )
+            Box(
+                Modifier.fillMaxWidth().height(220.dp).align(Alignment.BottomCenter)
+                    .playerEdgeBlurFade(top = false)
+                    .hazeEffect(haze) {
+                        blurRadius = (Prefs.glassBlur * 0.625f).coerceIn(0f, 32f).dp
+                        noiseFactor = 0.012f
+                        progressive = HazeProgressive.verticalGradient(
+                            easing = PlayerEdgeBlurEasing,
+                            startIntensity = 0f,
+                            endIntensity = 1f,
+                        )
+                    },
+            )
+        }
+
         if (buffering && error == null) {
             CircularProgressIndicator(
                 modifier = Modifier.align(Alignment.Center).size(44.dp),
@@ -521,7 +569,7 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
         }
 
         error?.let {
-            Text(it, color = Color.White, modifier = Modifier.align(Alignment.Center).glass(RoundedCornerShape(16.dp), glassHaze, dark, overVideo = true).padding(20.dp))
+            Text(it, color = Color.White, modifier = Modifier.align(Alignment.Center).glass(RoundedCornerShape(16.dp), glassHaze, dark, backdrop = playerLens, overVideo = true).padding(20.dp))
         }
 
         // Subtitles overlay
@@ -551,7 +599,7 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
                 color = Color.White,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Medium,
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 28.dp).glass(RoundedCornerShape(20.dp), glassHaze, dark, overVideo = true).padding(horizontal = 16.dp, vertical = 8.dp),
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 28.dp).glass(RoundedCornerShape(20.dp), glassHaze, dark, backdrop = playerLens, overVideo = true).padding(horizontal = 16.dp, vertical = 8.dp),
             )
         }
 
@@ -590,7 +638,7 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Box(
-                        Modifier.size(78.dp).glass(CircleShape, glassHaze, dark, overVideo = true).pressable { locked = false; showControls = true },
+                        Modifier.size(78.dp).glass(CircleShape, glassHaze, dark, backdrop = playerLens, overVideo = true).pressable { locked = false; showControls = true },
                         contentAlignment = Alignment.Center,
                     ) { Icon(Icons.Rounded.Lock, "Unlock", tint = Color.White, modifier = Modifier.size(34.dp)) }
                     Spacer(Modifier.height(10.dp))
@@ -613,7 +661,7 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
                         modifier = Modifier.weight(1f).padding(end = 12.dp),
                     )
                     Row(
-                        Modifier.glass(RoundedCornerShape(26.dp), glassHaze, dark, overVideo = true).padding(horizontal = 4.dp, vertical = 2.dp),
+                        Modifier.glass(RoundedCornerShape(26.dp), glassHaze, dark, backdrop = playerLens, overVideo = true).padding(horizontal = 4.dp, vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         BareIcon(Icons.Rounded.PictureInPictureAlt, "Picture in picture") { enterPip() }
@@ -630,12 +678,12 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
                     horizontalArrangement = Arrangement.spacedBy(36.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    GlassIcon(backIcon(Prefs.seekSeconds), "Back", 64.dp, 32.dp, glassHaze) { seekBy(-Prefs.seekSeconds * 1000L); interaction++ }
-                    GlassIcon(if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play or pause", 88.dp, 48.dp, glassHaze) {
+                    GlassIcon(backIcon(Prefs.seekSeconds), "Back", 64.dp, 32.dp, glassHaze, playerLens) { seekBy(-Prefs.seekSeconds * 1000L); interaction++ }
+                    GlassIcon(if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play or pause", 88.dp, 48.dp, glassHaze, playerLens) {
                         if (player.isPlaying) player.pause() else player.play()
                         interaction++
                     }
-                    GlassIcon(fwdIcon(Prefs.seekSeconds), "Forward", 64.dp, 32.dp, glassHaze) { seekBy(Prefs.seekSeconds * 1000L); interaction++ }
+                    GlassIcon(fwdIcon(Prefs.seekSeconds), "Forward", 64.dp, 32.dp, glassHaze, playerLens) { seekBy(Prefs.seekSeconds * 1000L); interaction++ }
                 }
 
                 Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(bottom = 14.dp)) {
@@ -654,13 +702,13 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
                         ),
                     )
                     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                        TimePill(formatTime(displayPos), glassHaze)
-                        TimePill(formatTime(dur), glassHaze)
+                        TimePill(formatTime(displayPos), glassHaze, playerLens)
+                        TimePill(formatTime(dur), glassHaze, playerLens)
                     }
                     Spacer(Modifier.height(10.dp))
                     Row(Modifier.fillMaxWidth().horizontalScroll(androidx.compose.foundation.rememberScrollState()), horizontalArrangement = Arrangement.Center) {
                         Row(
-                            Modifier.glass(RoundedCornerShape(26.dp), glassHaze, dark, overVideo = true).padding(horizontal = 6.dp, vertical = 2.dp),
+                            Modifier.glass(RoundedCornerShape(26.dp), glassHaze, dark, backdrop = playerLens, overVideo = true).padding(horizontal = 6.dp, vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             if (playlist.size > 1) {
@@ -814,9 +862,9 @@ private fun backIcon(s: Int): ImageVector = when (s) { 5 -> Icons.Rounded.Replay
 private fun fwdIcon(s: Int): ImageVector = when (s) { 5 -> Icons.Rounded.Forward5; 30 -> Icons.Rounded.Forward30; else -> Icons.Rounded.Forward10 }
 
 @Composable
-private fun GlassIcon(icon: ImageVector, desc: String, size: androidx.compose.ui.unit.Dp, iconSize: androidx.compose.ui.unit.Dp, haze: HazeState?, onClick: () -> Unit) {
+private fun GlassIcon(icon: ImageVector, desc: String, size: androidx.compose.ui.unit.Dp, iconSize: androidx.compose.ui.unit.Dp, haze: HazeState?, lens: com.kyant.backdrop.backdrops.LayerBackdrop? = null, onClick: () -> Unit) {
     Box(
-        Modifier.size(size).glass(CircleShape, haze, true, overVideo = true).pressable(onClick),
+        Modifier.size(size).glass(CircleShape, haze, true, backdrop = lens, overVideo = true).pressable(onClick),
         contentAlignment = Alignment.Center,
     ) { Icon(icon, desc, tint = Color.White, modifier = Modifier.size(iconSize)) }
 }
@@ -829,13 +877,13 @@ private fun BareIcon(icon: ImageVector, desc: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun TimePill(text: String, haze: HazeState?) {
+private fun TimePill(text: String, haze: HazeState?, lens: com.kyant.backdrop.backdrops.LayerBackdrop? = null) {
     Text(
         text,
         color = Color.White,
         fontSize = 12.sp,
         fontWeight = FontWeight.Medium,
-        modifier = Modifier.glass(RoundedCornerShape(12.dp), haze, true, overVideo = true).padding(horizontal = 10.dp, vertical = 4.dp),
+        modifier = Modifier.glass(RoundedCornerShape(12.dp), haze, true, backdrop = lens, overVideo = true).padding(horizontal = 10.dp, vertical = 4.dp),
     )
 }
 
@@ -898,3 +946,33 @@ private fun PickerDialog(title: String, options: List<String>, selected: Int, on
         }
     }
 }
+
+
+/*
+   Edge-blur fade adapted from NETMAX (MIT License): fade the whole rendered blur
+   effect, not just its radius, so the strip meets clear video with no shoulder.
+ */
+internal val PlayerEdgeBlurEasing = Easing { fraction ->
+    val t = fraction.coerceIn(0f, 1f)
+    t * t * (3f - 2f * t)
+}
+
+internal fun playerEdgeBlurStrength(distanceFromEdge: Float): Float {
+    val t = (distanceFromEdge / 0.92f).coerceIn(0f, 1f)
+    return 1f - t * t * (3f - 2f * t)
+}
+
+internal fun Modifier.playerEdgeBlurFade(top: Boolean): Modifier =
+    graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+        .drawWithCache {
+            val stops = Array(33) { index ->
+                val position = index / 32f
+                val distance = if (top) position else 1f - position
+                position to Color.White.copy(alpha = playerEdgeBlurStrength(distance))
+            }
+            val fade = Brush.verticalGradient(colorStops = stops)
+            onDrawWithContent {
+                drawContent()
+                drawRect(brush = fade, blendMode = BlendMode.DstIn)
+            }
+        }
