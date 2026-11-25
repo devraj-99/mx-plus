@@ -26,11 +26,11 @@ import dev.chrisbanes.haze.hazeEffect
  * Flat colours only: no gradients, no glow.
  */
 @Composable
-fun Modifier.glass(shape: Shape, haze: HazeState? = null, dark: Boolean = true, backdrop: com.kyant.backdrop.backdrops.LayerBackdrop? = null): Modifier {
+fun Modifier.glass(shape: Shape, haze: HazeState? = null, dark: Boolean = true, backdrop: com.kyant.backdrop.backdrops.LayerBackdrop? = null, overVideo: Boolean = false): Modifier {
     val opacity = Prefs.glassOpacity.coerceIn(0.05f, 0.85f)
-    val tint = if (dark) Color.Black.copy(alpha = opacity * 0.7f) else Color.White.copy(alpha = opacity)
+    val tint = if (overVideo) Color.White.copy(alpha = opacity * 0.35f) else if (dark) Color.Black.copy(alpha = opacity * 0.7f) else Color.White.copy(alpha = opacity)
     val edge = if (dark) Color.White.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.70f)
-    val fill = if (dark) Color.Black.copy(alpha = opacity) else Color.White.copy(alpha = (opacity + 0.25f).coerceAtMost(0.85f))
+    val fill = if (overVideo) Color.White.copy(alpha = opacity * 0.5f) else if (dark) Color.Black.copy(alpha = opacity) else Color.White.copy(alpha = (opacity + 0.25f).coerceAtMost(0.85f))
     if (Prefs.glass && backdrop != null && shape is androidx.compose.foundation.shape.CornerBasedShape && com.kyant.backdrop.isRuntimeShaderSupported()) {
         return this.lensGlass(backdrop, shape, Prefs.glassStrength)
     }

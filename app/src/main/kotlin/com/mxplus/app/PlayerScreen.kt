@@ -170,7 +170,7 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
     var speedBeforeBoost by remember { mutableFloatStateOf(1f) }
 
     val player = remember {
-        ExoPlayer.Builder(context).setHandleAudioBecomingNoisy(true).build().apply {
+        ExoPlayer.Builder(context, androidx.media3.exoplayer.DefaultRenderersFactory(context).setExtensionRendererMode(androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)).setHandleAudioBecomingNoisy(true).build().apply {
             val mediaItems = request.items.map {
                 MediaItem.Builder().setUri(it.uri).setMediaMetadata(MediaMetadata.Builder().setTitle(it.title).build()).build()
             }
@@ -346,13 +346,22 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
         pos = target
     }
 
+    fun pipParams(): PictureInPictureParams {
+        val ar = if (videoAspect in 0.42f..2.39f) Rational((videoAspect * 1000).toInt(), 1000) else Rational(16, 9)
+        val b = PictureInPictureParams.Builder().setAspectRatio(ar)
+        if (android.os.Build.VERSION.SDK_INT >= 31) b.setAutoEnterEnabled(playing)
+        return b.build()
+    }
+
     fun enterPip() {
         if (android.os.Build.VERSION.SDK_INT >= 26) {
-            runCatching {
-                val ar = if (videoAspect in 0.4f..2.4f) Rational((videoAspect * 1000).toInt(), 1000) else Rational(16, 9)
-                activity.enterPictureInPictureMode(PictureInPictureParams.Builder().setAspectRatio(ar).build())
-            }
+            runCatching { activity.enterPictureInPictureMode(pipParams()) }
+                .onFailure { flash("PiP blocked: enable it in Settings > Apps > MX Plus > Picture in picture") }
         }
+    }
+
+    LaunchedEffect(playing, videoAspect) {
+        if (android.os.Build.VERSION.SDK_INT >= 26) runCatching { activity.setPictureInPictureParams(pipParams()) }
     }
 
     val glassHaze = if (Prefs.glass && Prefs.playerGlass) haze else null
@@ -477,7 +486,8 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
                             }
                             when (mode) {
                                 DragMode.SEEK -> {
-                                    val d = if (dur > 0) dur else 0L
+                                    if (dur <= 0) { flash("Can't seek in this file"); return@detectDragGestures }
+                                    val d = dur
                                     seekTarget = (basePos + (totalX / size.width * 120_000f).toLong()).coerceIn(0L, d)
                                     scrub = seekTarget
                                     flash((if (seekTarget >= basePos) "+" else "-") + formatTime(abs(seekTarget - basePos)) + "  " + formatTime(seekTarget))
@@ -511,7 +521,7 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
         }
 
         error?.let {
-            Text(it, color = Color.White, modifier = Modifier.align(Alignment.Center).glass(RoundedCornerShape(16.dp), glassHaze, dark).padding(20.dp))
+            Text(it, color = Color.White, modifier = Modifier.align(Alignment.Center).glass(RoundedCornerShape(16.dp), glassHaze, dark, overVideo = true).padding(20.dp))
         }
 
         // Subtitles overlay
@@ -541,7 +551,7 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
                 color = Color.White,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Medium,
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 28.dp).glass(RoundedCornerShape(20.dp), glassHaze, dark).padding(horizontal = 16.dp, vertical = 8.dp),
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 28.dp).glass(RoundedCornerShape(20.dp), glassHaze, dark, overVideo = true).padding(horizontal = 16.dp, vertical = 8.dp),
             )
         }
 
@@ -580,7 +590,7 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Box(
-                        Modifier.size(78.dp).glass(CircleShape, glassHaze, dark).pressable { locked = false; showControls = true },
+                        Modifier.size(78.dp).glass(CircleShape, glassHaze, dark, overVideo = true).pressable { locked = false; showControls = true },
                         contentAlignment = Alignment.Center,
                     ) { Icon(Icons.Rounded.Lock, "Unlock", tint = Color.White, modifier = Modifier.size(34.dp)) }
                     Spacer(Modifier.height(10.dp))
@@ -593,25 +603,26 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
                     Modifier.align(Alignment.TopStart).fillMaxWidth().padding(top = 16.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    GlassIcon(Icons.AutoMirrored.Rounded.ArrowBack, "Back", 44.dp, 24.dp, glassHaze) { onClose() }
-                    Spacer(Modifier.width(12.dp))
                     Text(
                         titleText,
                         color = Color.White,
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f).glass(RoundedCornerShape(22.dp), glassHaze, dark).padding(horizontal = 16.dp, vertical = 10.dp),
+                        modifier = Modifier.weight(1f).padding(end = 12.dp),
                     )
-                    Spacer(Modifier.width(12.dp))
-                    GlassIcon(Icons.Rounded.PictureInPictureAlt, "Picture in picture", 44.dp, 24.dp, glassHaze) { enterPip() }
-                    Spacer(Modifier.width(10.dp))
-                    if (playlist.size > 1) {
-                        GlassIcon(Icons.AutoMirrored.Rounded.PlaylistPlay, "Playlist", 44.dp, 24.dp, glassHaze) { dialog = 4; interaction++ }
-                        Spacer(Modifier.width(10.dp))
+                    Row(
+                        Modifier.glass(RoundedCornerShape(26.dp), glassHaze, dark, overVideo = true).padding(horizontal = 4.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        BareIcon(Icons.Rounded.PictureInPictureAlt, "Picture in picture") { enterPip() }
+                        if (playlist.size > 1) {
+                            BareIcon(Icons.AutoMirrored.Rounded.PlaylistPlay, "Playlist") { dialog = 4; interaction++ }
+                        }
+                        BareIcon(Icons.Rounded.LockOpen, "Lock controls") { locked = true; showControls = true }
+                        BareIcon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") { onClose() }
                     }
-                    GlassIcon(Icons.Rounded.LockOpen, "Lock controls", 44.dp, 24.dp, glassHaze) { locked = true; showControls = true }
                 }
 
                 Row(
@@ -649,7 +660,7 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
                     Spacer(Modifier.height(10.dp))
                     Row(Modifier.fillMaxWidth().horizontalScroll(androidx.compose.foundation.rememberScrollState()), horizontalArrangement = Arrangement.Center) {
                         Row(
-                            Modifier.glass(RoundedCornerShape(26.dp), glassHaze, dark).padding(horizontal = 6.dp, vertical = 2.dp),
+                            Modifier.glass(RoundedCornerShape(26.dp), glassHaze, dark, overVideo = true).padding(horizontal = 6.dp, vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             if (playlist.size > 1) {
@@ -805,9 +816,16 @@ private fun fwdIcon(s: Int): ImageVector = when (s) { 5 -> Icons.Rounded.Forward
 @Composable
 private fun GlassIcon(icon: ImageVector, desc: String, size: androidx.compose.ui.unit.Dp, iconSize: androidx.compose.ui.unit.Dp, haze: HazeState?, onClick: () -> Unit) {
     Box(
-        Modifier.size(size).glass(CircleShape, haze, true).pressable(onClick),
+        Modifier.size(size).glass(CircleShape, haze, true, overVideo = true).pressable(onClick),
         contentAlignment = Alignment.Center,
     ) { Icon(icon, desc, tint = Color.White, modifier = Modifier.size(iconSize)) }
+}
+
+@Composable
+private fun BareIcon(icon: ImageVector, desc: String, onClick: () -> Unit) {
+    Box(Modifier.size(44.dp).pressable(onClick), contentAlignment = Alignment.Center) {
+        Icon(icon, desc, tint = Color.White, modifier = Modifier.size(23.dp))
+    }
 }
 
 @Composable
@@ -817,7 +835,7 @@ private fun TimePill(text: String, haze: HazeState?) {
         color = Color.White,
         fontSize = 12.sp,
         fontWeight = FontWeight.Medium,
-        modifier = Modifier.glass(RoundedCornerShape(12.dp), haze, true).padding(horizontal = 10.dp, vertical = 4.dp),
+        modifier = Modifier.glass(RoundedCornerShape(12.dp), haze, true, overVideo = true).padding(horizontal = 10.dp, vertical = 4.dp),
     )
 }
 

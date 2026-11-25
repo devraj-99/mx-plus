@@ -27,7 +27,8 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = versionCodeEnv
-        versionName = "0.4.0"
+        versionName = "0.5.0"
+        ndk { abiFilters += listOf("arm64-v8a") }
     }
 
     buildTypes {
@@ -69,6 +70,7 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.8.0")
     implementation("androidx.media3:media3-common:1.8.0")
     implementation("androidx.media3:media3-session:1.8.0")
+    implementation("androidx.media3:media3-decoder-ffmpeg:1.8.0")
     implementation("dev.chrisbanes.haze:haze:1.7.2")
     implementation("io.github.kyant0:backdrop:2.0.0")
 }

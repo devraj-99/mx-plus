@@ -78,7 +78,7 @@ object MusicPlayerHost {
     fun play(context: android.content.Context, songs: List<SongItem>, start: Int) {
         var p = player
         if (p == null) {
-            p = ExoPlayer.Builder(context.applicationContext).setHandleAudioBecomingNoisy(true).build()
+            p = ExoPlayer.Builder(context.applicationContext, androidx.media3.exoplayer.DefaultRenderersFactory(context.applicationContext).setExtensionRendererMode(androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)).setHandleAudioBecomingNoisy(true).build()
             player = p
             ActivePlayer.player = p
         }
