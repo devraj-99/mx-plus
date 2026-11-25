@@ -68,6 +68,7 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.8.0")
     implementation("androidx.media3:media3-ui:1.8.0")
     implementation("androidx.media3:media3-common:1.8.0")
+    implementation("androidx.media3:media3-session:1.8.0")
     implementation("dev.chrisbanes.haze:haze:1.7.2")
     implementation("io.github.kyant0:backdrop:2.0.0")
 }

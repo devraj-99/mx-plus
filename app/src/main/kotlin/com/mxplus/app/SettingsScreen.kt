@@ -120,6 +120,15 @@ fun SettingsScreen() {
             SwitchRow(Icons.Rounded.ScreenLockPortrait, "Keep screen on while playing", Prefs.keepOn) { Prefs.keepOn = it; Prefs.save() }
             Divider()
             ValueRow(Icons.Rounded.FastForward, "Hide controls after", if (Prefs.autoHideSec == 0) "Never" else "${Prefs.autoHideSec} sec") { picker = 4 }
+            Divider()
+            SwitchRow(Icons.Rounded.SkipNext, "Background play (notification)", Prefs.bgPlay) { on ->
+                if (on && android.os.Build.VERSION.SDK_INT >= 33 &&
+                    context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                ) {
+                    (context as? android.app.Activity)?.requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 77)
+                }
+                Prefs.bgPlay = on; Prefs.save()
+            }
         }
 
         Section("Subtitles") {

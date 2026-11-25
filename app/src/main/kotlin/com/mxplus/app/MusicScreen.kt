@@ -78,8 +78,15 @@ object MusicPlayerHost {
     fun play(context: android.content.Context, songs: List<SongItem>, start: Int) {
         var p = player
         if (p == null) {
-            p = ExoPlayer.Builder(context.applicationContext).build()
+            p = ExoPlayer.Builder(context.applicationContext).setHandleAudioBecomingNoisy(true).build()
             player = p
+            ActivePlayer.player = p
+        }
+        if (Prefs.bgPlay) {
+            runCatching {
+                val i = android.content.Intent(context.applicationContext, PlaybackService::class.java)
+                androidx.core.content.ContextCompat.startForegroundService(context.applicationContext, i)
+            }
         }
         queue = songs
         index = start
@@ -116,9 +123,7 @@ fun MusicScreen(haze: HazeState, backdrop: com.kyant.backdrop.backdrops.LayerBac
     }
     LaunchedEffect(permitted, tick) { if (permitted) MusicLibrary.refresh(context) }
 
-    DisposableEffect(Unit) {
-        onDispose { MusicPlayerHost.release() }
-    }
+
 
     val songs = MusicLibrary.songs
     Box(Modifier.fillMaxSize()) {

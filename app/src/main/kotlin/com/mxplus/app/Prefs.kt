@@ -29,6 +29,14 @@ object Prefs {
     var subScale by mutableFloatStateOf(1f) // subtitle text scale
     var subColor by mutableIntStateOf(0) // 0 white, 1 yellow, 2 green, 3 cyan
     var loopMode by mutableIntStateOf(0) // 0 off, 1 all, 2 one
+    var bgPlay by mutableStateOf(false)
+    var volumeBoost by mutableIntStateOf(100) // percent 100..200
+    var eqEnabled by mutableStateOf(false)
+    var eqPreset by mutableIntStateOf(0)
+    var bright by mutableIntStateOf(0) // -50..50
+    var contrast by mutableIntStateOf(100) // 50..200 percent
+    var saturate by mutableIntStateOf(100) // 0..200 percent
+    var hue by mutableIntStateOf(0) // -180..180
 
     fun init(context: Context) {
         if (sp != null) return
@@ -52,6 +60,14 @@ object Prefs {
         subScale = s.getFloat("subScale", 1f)
         subColor = s.getInt("subColor", 0)
         loopMode = s.getInt("loopMode", 0)
+        bgPlay = s.getBoolean("bgPlay", false)
+        volumeBoost = s.getInt("volBoost", 100)
+        eqEnabled = s.getBoolean("eqOn", false)
+        eqPreset = s.getInt("eqPreset", 0)
+        bright = s.getInt("bright", 0)
+        contrast = s.getInt("contrast", 100)
+        saturate = s.getInt("sat", 100)
+        hue = s.getInt("hue", 0)
     }
 
     fun save() {
@@ -73,6 +89,14 @@ object Prefs {
             ?.putFloat("subScale", subScale)
             ?.putInt("subColor", subColor)
             ?.putInt("loopMode", loopMode)
+            ?.putBoolean("bgPlay", bgPlay)
+            ?.putInt("volBoost", volumeBoost)
+            ?.putBoolean("eqOn", eqEnabled)
+            ?.putInt("eqPreset", eqPreset)
+            ?.putInt("bright", bright)
+            ?.putInt("contrast", contrast)
+            ?.putInt("sat", saturate)
+            ?.putInt("hue", hue)
             ?.apply()
     }
 

@@ -34,14 +34,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.AspectRatio
+import androidx.compose.material.icons.rounded.CameraAlt
+import androidx.compose.material.icons.rounded.Equalizer
+import androidx.compose.material.icons.rounded.RepeatOneOn
 import androidx.compose.material.icons.rounded.Audiotrack
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Forward10
@@ -157,11 +162,15 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
     var sleepAt by remember { mutableStateOf<Long?>(null) }
     var videoAspect by remember { mutableFloatStateOf(0f) }
     var boosted by remember { mutableStateOf(false) }
+    var aPoint by remember { mutableLongStateOf(-1L) }
+    var bPoint by remember { mutableLongStateOf(-1L) }
+    var videoFrame by remember { mutableStateOf<AspectRatioFrameLayout?>(null) }
+    val audioFx = remember { AudioFx() }
     val attachedTv = remember { arrayOfNulls<TextureView>(1) }
     var speedBeforeBoost by remember { mutableFloatStateOf(1f) }
 
     val player = remember {
-        ExoPlayer.Builder(context).build().apply {
+        ExoPlayer.Builder(context).setHandleAudioBecomingNoisy(true).build().apply {
             val mediaItems = request.items.map {
                 MediaItem.Builder().setUri(it.uri).setMediaMetadata(MediaMetadata.Builder().setTitle(it.title).build()).build()
             }
@@ -176,6 +185,17 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
             }
             prepare()
             playWhenReady = true
+        }
+    }
+
+    LaunchedEffect(player) {
+        ActivePlayer.player = player
+        audioFx.attach(player)
+        if (Prefs.bgPlay) {
+            runCatching {
+                val i = android.content.Intent(context.applicationContext, PlaybackService::class.java)
+                androidx.core.content.ContextCompat.startForegroundService(context.applicationContext, i)
+            }
         }
     }
 
@@ -249,6 +269,8 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
                 val item = playlist.getOrNull(player.currentMediaItemIndex)
                 if (item != null) Prefs.saveResume(item.uri, player.currentPosition, player.duration.coerceAtLeast(0))
             }
+            audioFx.release()
+            if (ActivePlayer.player === player) ActivePlayer.player = null
             player.removeListener(listener)
             player.release()
         }
@@ -278,6 +300,11 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
             playing = player.isPlaying
             buffering = player.playbackState == Player.STATE_BUFFERING
             if (!boosted) speed = player.playbackParameters.speed
+            val b = bPoint
+            if (aPoint >= 0 && b > aPoint && pos > b) {
+                player.seekTo(aPoint)
+                pos = aPoint
+            }
             val deadline = sleepAt
             if (deadline != null && System.currentTimeMillis() >= deadline) {
                 sleepAt = null
@@ -330,6 +357,10 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
 
     val glassHaze = if (Prefs.glass && Prefs.playerGlass) haze else null
 
+    LaunchedEffect(Prefs.bright, Prefs.contrast, Prefs.saturate, Prefs.hue) {
+        videoFrame?.let { VisualEnhancer.apply(it) }
+    }
+
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
             modifier = Modifier.fillMaxSize().hazeSource(haze).graphicsLayer { scaleX = zoom; scaleY = zoom },
@@ -340,6 +371,7 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
                 }
             },
             update = { frame ->
+                videoFrame = frame
                 frame.setAspectRatio(videoAspect)
                 frame.resizeMode = when (resize) {
                     1 -> AspectRatioFrameLayout.RESIZE_MODE_FILL
@@ -513,6 +545,31 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
             )
         }
 
+        fun frameStep(forward: Boolean) {
+            player.pause()
+            val step = 40L
+            val t = (player.currentPosition + if (forward) step else -step).coerceIn(0L, dur.coerceAtLeast(0L))
+            player.seekTo(t)
+            pos = t
+            flash(if (forward) "+1 frame" else "-1 frame")
+        }
+
+        fun screenshot() {
+            val tv = attachedTv[0] ?: run { flash("No video frame"); return }
+            val bmp = runCatching { tv.bitmap }.getOrNull() ?: run { flash("Screenshot failed"); return }
+            val name = "MXPlus-" + System.currentTimeMillis() + ".jpg"
+            val values = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, name)
+                put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                if (android.os.Build.VERSION.SDK_INT >= 29) put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/MX Plus")
+            }
+            val uri = context.contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            val ok = runCatching {
+                uri?.let { context.contentResolver.openOutputStream(it)?.use { o -> bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, o) } } ?: false
+            }.getOrDefault(false)
+            flash(if (ok == true) "Screenshot saved to Photos" else "Screenshot failed")
+        }
+
         val displayPos = scrub ?: pos
         val safe = Modifier.windowInsetsPadding(WindowInsets.displayCutout)
 
@@ -590,7 +647,7 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
                         TimePill(formatTime(dur), glassHaze)
                     }
                     Spacer(Modifier.height(10.dp))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    Row(Modifier.fillMaxWidth().horizontalScroll(androidx.compose.foundation.rememberScrollState()), horizontalArrangement = Arrangement.Center) {
                         Row(
                             Modifier.glass(RoundedCornerShape(26.dp), glassHaze, dark).padding(horizontal = 6.dp, vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -603,6 +660,16 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
                             PillButton("Subs", Icons.Rounded.Subtitles) { dialog = 3; interaction++ }
                             PillButton("Audio", Icons.Rounded.Audiotrack) { dialog = 2; interaction++ }
                             PillButton("Sleep", Icons.Rounded.Bedtime) { dialog = 5; interaction++ }
+                            PillButton("", Icons.Rounded.RepeatOneOn, tint = if (aPoint >= 0) MaterialTheme.colorScheme.primary else Color.White) {
+                                when {
+                                    aPoint < 0L -> { aPoint = player.currentPosition; flash("A set") }
+                                    bPoint < 0L -> { bPoint = player.currentPosition; flash("B set, looping A-B") }
+                                    else -> { aPoint = -1; bPoint = -1; flash("A-B cleared") }
+                                }
+                                interaction++
+                            }
+                            PillButton("Shot", Icons.Rounded.CameraAlt) { screenshot(); interaction++ }
+                            PillButton("FX", Icons.Rounded.Equalizer) { dialog = 6; interaction++ }
                             PillButton("", when (Prefs.loopMode) { 2 -> Icons.Rounded.RepeatOne; else -> Icons.Rounded.Repeat }, tint = if (Prefs.loopMode == 0) Color.White else MaterialTheme.colorScheme.primary) {
                                 Prefs.loopMode = (Prefs.loopMode + 1) % 3
                                 Prefs.save()
@@ -675,6 +742,44 @@ fun PlayerScreen(request: PlayRequest, onClose: () -> Unit) {
             4 -> PickerDialog("Playlist", playlist.map { it.title }, currentIndex, { i ->
                 player.seekToDefaultPosition(i); dialog = 0
             }) { dialog = 0 }
+            6 -> Dialog(onDismissRequest = { dialog = 0 }) {
+                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Color(0xFF1C1C1F)).padding(20.dp)) {
+                    Text("Effects", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Equalizer", color = Color.White, fontSize = 15.sp, modifier = Modifier.weight(1f))
+                        androidx.compose.material3.Switch(checked = Prefs.eqEnabled, onCheckedChange = { Prefs.eqEnabled = it; Prefs.save(); audioFx.applyEq() })
+                    }
+                    if (Prefs.eqEnabled) {
+                        val presets = audioFx.presets()
+                        Row(Modifier.horizontalScroll(rememberScrollState())) {
+                            presets.forEachIndexed { i, name ->
+                                Box(
+                                    Modifier.padding(end = 8.dp).clip(RoundedCornerShape(16.dp))
+                                        .background(if (Prefs.eqPreset == i) MaterialTheme.colorScheme.primary else Color(0xFF2C2C30))
+                                        .clickable { Prefs.eqPreset = i; Prefs.save(); audioFx.applyEq() }
+                                        .padding(horizontal = 14.dp, vertical = 7.dp),
+                                ) { Text(name, color = Color.White, fontSize = 13.sp) }
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    FxSlider("Volume boost", Prefs.volumeBoost / 100f, 1f..2f) { Prefs.volumeBoost = (it * 100).toInt(); Prefs.save(); audioFx.applyBoost() }
+                    FxSlider("Brightness", (Prefs.bright + 50) / 100f, 0f..1f) { Prefs.bright = (it * 100 - 50).toInt(); Prefs.save() }
+                    FxSlider("Contrast", Prefs.contrast / 200f, 0.25f..1f) { Prefs.contrast = (it * 200).toInt(); Prefs.save() }
+                    FxSlider("Saturation", Prefs.saturate / 200f, 0f..1f) { Prefs.saturate = (it * 200).toInt(); Prefs.save() }
+                    FxSlider("Hue", (Prefs.hue + 180) / 360f, 0f..1f) { Prefs.hue = (it * 360 - 180).toInt(); Prefs.save() }
+                    Spacer(Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        SmallBtn("- frame") { frameStep(false) }
+                        SmallBtn("+ frame") { frameStep(true) }
+                        SmallBtn("Reset FX") {
+                            Prefs.bright = 0; Prefs.contrast = 100; Prefs.saturate = 100; Prefs.hue = 0; Prefs.volumeBoost = 100
+                            Prefs.save(); audioFx.applyBoost()
+                        }
+                    }
+                }
+            }
             5 -> {
                 val opts = listOf("Off", "15 minutes", "30 minutes", "45 minutes", "60 minutes")
                 val mins = listOf(0, 15, 30, 45, 60)
@@ -725,6 +830,26 @@ private fun PillButton(label: String, icon: ImageVector, tint: Color = Color.Whi
     ) {
         Icon(icon, label, tint = tint, modifier = Modifier.size(18.dp))
         if (label.isNotEmpty()) Text(label, color = tint, fontSize = 13.sp, maxLines = 1, softWrap = false)
+    }
+}
+
+@Composable
+private fun FxSlider(label: String, value: Float, range: ClosedFloatingPointRange<Float>, onChange: (Float) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = Color.White.copy(alpha = 0.8f), fontSize = 13.sp, modifier = Modifier.width(100.dp))
+        Slider(
+            value = value,
+            onValueChange = onChange,
+            valueRange = range,
+            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = MaterialTheme.colorScheme.primary, inactiveTrackColor = Color.White.copy(alpha = 0.25f)),
+        )
+    }
+}
+
+@Composable
+private fun SmallBtn(label: String, onClick: () -> Unit) {
+    Box(Modifier.clip(RoundedCornerShape(14.dp)).background(Color(0xFF2C2C30)).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 8.dp)) {
+        Text(label, color = Color.White, fontSize = 13.sp)
     }
 }
 
